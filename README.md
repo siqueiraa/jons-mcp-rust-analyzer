@@ -65,33 +65,83 @@ pip install fastmcp
 
 ## Usage
 
-### With Claude Desktop
+### With Claude Code (CLI)
 
-Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Claude Code supports MCP servers through the `claude mcp add` command. To use rust-analyzer with Claude Code:
+
+#### Option 1: Add as a project-scoped MCP server
+
+```bash
+# Navigate to your Rust project
+cd /path/to/your/rust/project
+
+# Add rust-analyzer as an MCP server for this project
+claude mcp add --scope project rust-analyzer uv run /path/to/rust_analyzer_mcp.py
+
+# Now use Claude Code normally - it will have access to rust-analyzer tools
+claude "what does the function at line 42 in src/main.rs do?"
+```
+
+#### Option 2: Add as a user-scoped MCP server (global)
+
+```bash
+# Add rust-analyzer globally (you'll need to specify project path when using)
+claude mcp add --scope user rust-analyzer uv run /path/to/rust_analyzer_mcp.py
+
+# When using, make sure you're in a Rust project directory
+cd /path/to/your/rust/project
+claude "find all implementations of the Display trait"
+```
+
+#### Option 3: Add with environment variables
+
+```bash
+# Add with custom rust-analyzer path
+claude mcp add --scope project rust-analyzer \
+  -e RUST_ANALYZER_PATH=/custom/path/to/rust-analyzer \
+  -e LOG_LEVEL=DEBUG \
+  -- uv run /path/to/rust_analyzer_mcp.py
+```
+
+#### Option 4: Using with --mcp-config flag
+
+Create an MCP configuration file (`mcp-config.json`):
 
 ```json
 {
-  "mcpServers": {
-    "rust-analyzer": {
-      "command": "uv",
-      "args": ["run", "/path/to/rust_analyzer_mcp.py"],
-      "cwd": "/path/to/your/rust/project"
+  "rust-analyzer": {
+    "command": "uv",
+    "args": ["run", "/path/to/rust_analyzer_mcp.py"],
+    "env": {
+      "LOG_LEVEL": "INFO"
     }
   }
 }
 ```
 
-Or if you prefer to use the script directly:
+Then use it:
+```bash
+cd /path/to/your/rust/project
+claude --mcp-config mcp-config.json "analyze my Rust code"
+```
 
-```json
-{
-  "mcpServers": {
-    "rust-analyzer": {
-      "command": "/path/to/rust_analyzer_mcp.py",
-      "cwd": "/path/to/your/rust/project"
-    }
-  }
-}
+#### Managing MCP servers
+
+```bash
+# List configured MCP servers
+claude mcp list
+
+# Remove an MCP server
+claude mcp remove rust-analyzer
+
+# Check MCP server status while in Claude Code
+# Type: /mcp
+```
+
+**Note**: When using MCP tools, you may need to explicitly allow them with the `--allowedTools` flag for security:
+
+```bash
+claude --allowedTools "mcp__rust-analyzer__*" "format all files in src/"
 ```
 
 ### Configuration
@@ -155,6 +205,32 @@ rust-analyzer-mcp/
 │   └── test_integration.py  # Integration tests
 └── README.md                # This file
 ```
+
+## Example Usage in Claude Code
+
+Once configured, you can use natural language to interact with your Rust code. Claude Code will automatically use the appropriate rust-analyzer tools:
+
+```bash
+# Navigate to your Rust project
+cd /path/to/your/rust/project
+
+# Basic usage examples
+claude "what does the function at line 42 in src/main.rs do?"
+claude "find all implementations of the Display trait in this project"
+claude "show me all usages of the process_data function"
+claude "what errors are in my project?"
+claude "rename the Config struct to Configuration throughout the codebase"
+claude "format all files in the src directory"
+claude "expand the vec! macro at line 15 in main.rs"
+claude "find all tests related to the Parser struct"
+
+# More complex requests
+claude "analyze the error handling in the network module and suggest improvements"
+claude "explain how the lifetime parameters work in the Cache implementation"
+claude "find all TODO comments and create a summary"
+```
+
+The MCP server provides Claude Code with deep understanding of your Rust code through rust-analyzer's semantic analysis.
 
 ## How It Works
 
