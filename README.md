@@ -271,6 +271,22 @@ export LOG_LEVEL=DEBUG
 uv run rust_analyzer_mcp.py
 ```
 
+### Command execution issues
+
+If you encounter `ENOENT` errors when Claude Code tries to start the MCP server, create a wrapper script:
+
+```bash
+#!/bin/bash
+# Save as run_rust_analyzer_mcp.sh
+exec uv run /path/to/rust_analyzer_mcp.py
+```
+
+Make it executable and use it instead:
+```bash
+chmod +x run_rust_analyzer_mcp.sh
+claude mcp add --scope project rust_analyzer /path/to/run_rust_analyzer_mcp.sh
+```
+
 ## License
 
 MIT License - see LICENSE file for details
