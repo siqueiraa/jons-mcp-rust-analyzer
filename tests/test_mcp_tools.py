@@ -1,0 +1,555 @@
+"""
+Integration tests for MCP tools that interact with rust-analyzer.
+"""
+
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock, patch, MagicMock
+import pytest
+
+import rust_analyzer_mcp
+from rust_analyzer_mcp import ensure_file_uri, ensure_rust_analyzer
+
+
+class TestHelperFunctions:
+    """Test helper functions."""
+    
+    def test_ensure_file_uri_already_uri(self):
+        """Test ensure_file_uri with existing URI."""
+        uri = "file:///home/user/project/src/main.rs"
+        assert ensure_file_uri(uri) == uri
+    
+    def test_ensure_file_uri_absolute_path(self):
+        """Test ensure_file_uri with absolute path."""
+        path = "/home/user/project/src/main.rs"
+        result = ensure_file_uri(path)
+        assert result == f"file://{path}"
+    
+    def test_ensure_file_uri_relative_path(self, tmp_path: Path, monkeypatch):
+        """Test ensure_file_uri with relative path."""
+        monkeypatch.chdir(tmp_path)
+        
+        result = ensure_file_uri("src/main.rs")
+        expected = f"file://{tmp_path}/src/main.rs"
+        assert result == expected
+    
+    def test_ensure_rust_analyzer_not_initialized(self):
+        """Test ensure_rust_analyzer when not initialized."""
+        # Clear global client
+        rust_analyzer_mcp.rust_analyzer = None
+        
+        with pytest.raises(RuntimeError, match="rust-analyzer is not initialized"):
+            ensure_rust_analyzer()
+    
+    def test_ensure_rust_analyzer_initialized(self):
+        """Test ensure_rust_analyzer when initialized."""
+        # Mock global client
+        mock_client = MagicMock()
+        mock_client._initialized = True
+        rust_analyzer_mcp.rust_analyzer = mock_client
+        
+        result = ensure_rust_analyzer()
+        assert result == mock_client
+
+
+@pytest.mark.asyncio
+class TestLanguageFeatureTools:
+    """Test core language feature MCP tools."""
+    
+    async def test_hover_tool(self):
+        """Test hover tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value={
+            "contents": {
+                "kind": "markdown",
+                "value": "```rust\nfn test()\n```"
+            }
+        })
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.hover.fn("src/main.rs", 10, 5, ctx)
+        
+        assert "contents" in result
+        # Check that the request was made with an absolute path
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "textDocument/hover"
+        assert call_args[0][1]["textDocument"]["uri"].endswith("/src/main.rs")
+        assert call_args[0][1]["position"] == {"line": 10, "character": 5}
+    
+    async def test_completion_tool(self):
+        """Test completion tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {"label": "println!", "kind": 15},
+            {"label": "print!", "kind": 15}
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, ctx)
+        
+        assert len(result) == 2
+        assert result[0]["label"] == "println!"
+    
+    async def test_completion_tool_with_completion_list(self):
+        """Test completion tool with CompletionList response."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value={
+            "isIncomplete": False,
+            "items": [{"label": "test"}]
+        })
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, ctx)
+        
+        assert len(result) == 1
+        assert result[0]["label"] == "test"
+    
+    async def test_definition_tool(self):
+        """Test definition tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value={
+            "uri": "file:///src/lib.rs",
+            "range": {
+                "start": {"line": 10, "character": 0},
+                "end": {"line": 15, "character": 1}
+            }
+        })
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.definition.fn("src/main.rs", 20, 15, ctx)
+        
+        assert result["uri"] == "file:///src/lib.rs"
+    
+    async def test_references_tool(self):
+        """Test references tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "uri": "file:///src/main.rs",
+                "range": {"start": {"line": 10, "character": 5}}
+            },
+            {
+                "uri": "file:///src/lib.rs",
+                "range": {"start": {"line": 20, "character": 10}}
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.references.fn(
+                "src/main.rs", 10, 5, include_declaration=True, ctx=ctx
+            )
+        
+        assert len(result) == 2
+        # Check that the request was made with correct parameters
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "textDocument/references"
+        assert call_args[0][1]["textDocument"]["uri"].endswith("/src/main.rs")
+        assert call_args[0][1]["position"] == {"line": 10, "character": 5}
+        assert call_args[0][1]["context"] == {"includeDeclaration": True}
+    
+    async def test_document_symbols_tool(self):
+        """Test document symbols tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "name": "main",
+                "kind": 12,  # Function
+                "range": {"start": {"line": 0, "character": 0}},
+                "selectionRange": {"start": {"line": 0, "character": 3}}
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.document_symbols.fn("src/main.rs", ctx)
+        
+        assert len(result) == 1
+        assert result[0]["name"] == "main"
+    
+    async def test_workspace_symbols_tool(self):
+        """Test workspace symbols tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "name": "Calculator",
+                "kind": 5,  # Class
+                "location": {
+                    "uri": "file:///src/lib.rs",
+                    "range": {"start": {"line": 10, "character": 0}}
+                }
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.workspace_symbols.fn("Calc", ctx)
+        
+        assert len(result) == 1
+        assert result[0]["name"] == "Calculator"
+
+
+@pytest.mark.asyncio
+class TestCodeIntelligenceTools:
+    """Test code intelligence MCP tools."""
+    
+    async def test_diagnostics_tool_all_files(self):
+        """Test diagnostics tool for all files."""
+        rust_analyzer_mcp.current_diagnostics = {
+            "file:///src/main.rs": [
+                {"severity": 1, "message": "Error 1"}
+            ],
+            "file:///src/lib.rs": [
+                {"severity": 2, "message": "Warning 1"}
+            ]
+        }
+        
+        result = await rust_analyzer_mcp.diagnostics.fn()
+        assert len(result) == 2
+        assert "file:///src/main.rs" in result
+        assert "file:///src/lib.rs" in result
+    
+    async def test_diagnostics_tool_specific_file(self):
+        """Test diagnostics tool for specific file."""
+        rust_analyzer_mcp.current_diagnostics = {
+            "file:///src/main.rs": [
+                {"severity": 1, "message": "Error 1"}
+            ],
+            "file:///src/lib.rs": []
+        }
+        
+        result = await rust_analyzer_mcp.diagnostics.fn("src/main.rs")
+        assert len(result) == 1
+        # Check that the URI in the result ends with the expected path
+        uri = list(result.keys())[0]
+        assert uri.endswith("/src/main.rs")
+    
+    async def test_code_actions_tool(self):
+        """Test code actions tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "title": "Import `std::io`",
+                "kind": "quickfix",
+                "edit": {"changes": {}}
+            }
+        ])
+        
+        rust_analyzer_mcp.current_diagnostics = {
+            "file:///src/main.rs": [{"severity": 1}]
+        }
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.code_actions.fn(
+                "src/main.rs", 10, 0, 10, 20, ctx
+            )
+        
+        assert len(result) == 1
+        assert result[0]["title"] == "Import `std::io`"
+    
+    async def test_rename_tool(self):
+        """Test rename tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        
+        # Mock prepare rename
+        mock_client.request = AsyncMock()
+        mock_client.request.side_effect = [
+            {"range": {"start": {"line": 10, "character": 5}}},  # prepareRename
+            {"changes": {"file:///src/main.rs": []}}  # rename
+        ]
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.rename.fn(
+                "src/main.rs", 10, 5, "new_name", ctx
+            )
+        
+        assert "changes" in result
+        assert mock_client.request.call_count == 2
+    
+    async def test_rename_tool_invalid_position(self):
+        """Test rename tool at invalid position."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(side_effect=rust_analyzer_mcp.LSPRequestError("Cannot rename"))
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.rename.fn(
+                "src/main.rs", 10, 5, "new_name", ctx
+            )
+        
+        assert result == {"error": "Cannot rename at this position"}
+
+
+@pytest.mark.asyncio
+class TestFormattingTools:
+    """Test formatting MCP tools."""
+    
+    async def test_format_document_tool(self):
+        """Test format document tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 10}
+                },
+                "newText": "formatted code"
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.format_document.fn(
+                "src/main.rs", tab_size=4, insert_spaces=True, ctx=ctx
+            )
+        
+        assert len(result) == 1
+        assert result[0]["newText"] == "formatted code"
+    
+    async def test_format_range_tool(self):
+        """Test format range tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.format_range.fn(
+                "src/main.rs", 10, 0, 20, 0, ctx=ctx
+            )
+        
+        assert result == []
+        mock_client.request.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestRustAnalyzerExtensions:
+    """Test rust-analyzer specific extension tools."""
+    
+    async def test_expand_macro_tool(self):
+        """Test expand macro tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value={
+            "name": "println",
+            "expansion": "std::io::println(\"Hello\")"
+        })
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.expand_macro.fn("src/main.rs", 10, 5, ctx)
+        
+        assert "expansion" in result
+    
+    async def test_syntax_tree_tool(self):
+        """Test syntax tree tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value="FUNCTION@0..20")
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.syntax_tree.fn("src/main.rs", ctx=ctx)
+        
+        assert result == "FUNCTION@0..20"
+    
+    async def test_syntax_tree_tool_with_range(self):
+        """Test syntax tree tool with range."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value="EXPR@10..20")
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            result = await rust_analyzer_mcp.syntax_tree.fn(
+                "src/main.rs", 10, 0, 20, 0
+            )
+        
+        assert result == "EXPR@10..20"
+        
+        # Verify range was included in request
+        call_args = mock_client.request.call_args[0]
+        assert "range" in call_args[1]
+    
+    async def test_analyzer_status_tool(self):
+        """Test analyzer status tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value="Analyzer: ready\nMemory: 100MB")
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.analyzer_status.fn(ctx)
+        
+        assert "Analyzer: ready" in result
+    
+    async def test_view_crate_graph_tool(self):
+        """Test view crate graph tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value='digraph { "crate1" -> "crate2" }')
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.view_crate_graph.fn(ctx)
+        
+        assert "digraph" in result
+    
+    async def test_related_tests_tool(self):
+        """Test related tests tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "uri": "file:///src/main.rs",
+                "range": {"start": {"line": 50, "character": 0}}
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.related_tests.fn("src/main.rs", 10, 5, ctx)
+        
+        assert len(result) == 1
+    
+    async def test_runnables_tool(self):
+        """Test runnables tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value=[
+            {
+                "label": "test test_add",
+                "kind": "test",
+                "args": {
+                    "cargoArgs": ["test", "test_add"],
+                    "executableArgs": []
+                }
+            }
+        ])
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.runnables.fn("src/main.rs", ctx=ctx)
+        
+        assert len(result) == 1
+        assert result[0]["label"] == "test test_add"
+    
+    async def test_ssr_tool(self):
+        """Test structural search and replace tool."""
+        mock_client = AsyncMock()
+        mock_client._initialized = True
+        mock_client.request = AsyncMock(return_value={
+            "changes": {
+                "file:///src/main.rs": [
+                    {"range": {}, "newText": "replaced"}
+                ]
+            }
+        })
+        
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await rust_analyzer_mcp.ssr.fn(
+                "foo($x)", "bar($x)", ctx
+            )
+        
+        assert "changes" in result
+
+
+@pytest.mark.asyncio
+class TestServerLifecycle:
+    """Test MCP server lifecycle."""
+    
+    async def test_lifespan_with_cargo_toml(self, tmp_path: Path, monkeypatch):
+        """Test lifespan with Cargo.toml present."""
+        monkeypatch.chdir(tmp_path)
+        
+        # Create a Cargo.toml
+        (tmp_path / "Cargo.toml").write_text("[package]\nname = \"test\"")
+        
+        mock_client_class = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.start = AsyncMock()
+        mock_client.shutdown = AsyncMock()
+        mock_client.on_notification = MagicMock()
+        mock_client_class.return_value = mock_client
+        
+        with patch("rust_analyzer_mcp.RustAnalyzerClient", mock_client_class):
+            # Use the lifespan context manager
+            async with rust_analyzer_mcp.lifespan(None):
+                assert rust_analyzer_mcp.rust_analyzer == mock_client
+                mock_client.start.assert_called_once()
+            
+            # After exiting, should be shutdown
+            mock_client.shutdown.assert_called_once()
+            assert rust_analyzer_mcp.rust_analyzer is None
+    
+    async def test_lifespan_no_cargo_toml(self, tmp_path: Path, monkeypatch):
+        """Test lifespan without Cargo.toml."""
+        monkeypatch.chdir(tmp_path)
+        
+        mock_client_class = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.start = AsyncMock()
+        mock_client.shutdown = AsyncMock()
+        mock_client.on_notification = MagicMock()
+        mock_client_class.return_value = mock_client
+        
+        with patch("rust_analyzer_mcp.RustAnalyzerClient", mock_client_class):
+            with patch("rust_analyzer_mcp.logger") as mock_logger:
+                async with rust_analyzer_mcp.lifespan(None):
+                    # Should log warning
+                    mock_logger.warning.assert_called_once()
+    
+    async def test_lifespan_start_failure(self, tmp_path: Path, monkeypatch):
+        """Test lifespan when rust-analyzer fails to start."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "Cargo.toml").write_text("[package]\nname = \"test\"")
+        
+        mock_client_class = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.start = AsyncMock(side_effect=Exception("Failed to start"))
+        mock_client.on_notification = MagicMock()
+        mock_client_class.return_value = mock_client
+        
+        with patch("rust_analyzer_mcp.RustAnalyzerClient", mock_client_class):
+            with pytest.raises(Exception, match="Failed to start"):
+                async with rust_analyzer_mcp.lifespan(None):
+                    pass
+
+
+class TestNotificationHandlers:
+    """Test notification handlers."""
+    
+    @pytest.mark.asyncio
+    async def test_handle_diagnostics(self):
+        """Test diagnostics notification handler."""
+        params = {
+            "uri": "file:///src/main.rs",
+            "diagnostics": [
+                {"severity": 1, "message": "Error"},
+                {"severity": 2, "message": "Warning"}
+            ]
+        }
+        
+        await rust_analyzer_mcp.handle_diagnostics(params)
+        
+        assert "file:///src/main.rs" in rust_analyzer_mcp.current_diagnostics
+        assert len(rust_analyzer_mcp.current_diagnostics["file:///src/main.rs"]) == 2
