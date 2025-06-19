@@ -8,7 +8,8 @@ Build a standalone Python script that creates a FastMCP server exposing all rust
 ### 1. Standalone Script Architecture
 - Single Python file with inline dependencies (using uv comment syntax)
 - Dependencies specified as: `# /// script` block for uv
-- Main dependencies: `fastmcp`, `asyncio` (built-in)
+- Python version requirement: `>= 3.10` (required by FastMCP)
+- Main dependencies: `fastmcp>=0.3.0`, `asyncio` (built-in)
 - No external LSP client libraries required (custom implementation)
 
 ### 2. rust-analyzer Discovery
@@ -24,12 +25,14 @@ Build a standalone Python script that creates a FastMCP server exposing all rust
 - Assumes MCP server is launched from the Rust project directory (Claude Code use case)
 
 ### 4. LSP Communication Layer
-- Custom asyncio-based implementation
+- Custom asyncio-based implementation (~300 lines total)
 - Handle stdio communication with proper LSP headers
-- Message parsing and serialization
-- Request/response correlation with unique IDs
-- Notification handling for server-initiated messages
-- Proper error handling and timeout management
+- Message parsing with Content-Length header processing
+- JSON-RPC 2.0 message format with proper typing
+- Request/response correlation with monotonic ID counter
+- Notification handling for server-initiated messages (diagnostics)
+- 30-second timeout for requests with proper cleanup
+- Concurrent request support via asyncio.Future tracking
 
 #### Why Custom Implementation Over Off-the-Shelf Libraries
 After evaluating options like pygls, pylspclient, and python-lsp-jsonrpc, a custom implementation is recommended because:
@@ -93,6 +96,7 @@ The implementation is essentially JSON-RPC over stdio with header parsing - stra
 ```python
 #!/usr/bin/env python3
 # /// script
+# requires-python = ">=3.10"
 # dependencies = [
 #   "fastmcp>=0.3.0",
 # ]
@@ -104,30 +108,39 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
+from contextlib import asynccontextmanager
 from fastmcp import FastMCP, Context
-
-# FastMCP server instance
-mcp = FastMCP(name="rust-analyzer-mcp")
-
-# RustAnalyzerClient class (as detailed in research)
-class RustAnalyzerClient:
-    # ... implementation from research ...
 
 # Global client instance
 rust_analyzer: Optional[RustAnalyzerClient] = None
 
-# Server lifecycle hooks
-@mcp.server.on_initialize
-async def on_initialize(params):
-    # Start rust-analyzer subprocess
-    # Initialize LSP connection
-    pass
+# Lifecycle management using lifespan context manager
+@asynccontextmanager
+async def lifespan(mcp: FastMCP):
+    """Manage rust-analyzer lifecycle"""
+    global rust_analyzer
+    # Startup: Initialize rust-analyzer
+    rust_analyzer = RustAnalyzerClient(Path.cwd())
+    await rust_analyzer.start()
+    yield
+    # Shutdown: Clean up rust-analyzer
+    await rust_analyzer.shutdown()
+
+# FastMCP server instance with lifespan
+mcp = FastMCP(
+    name="rust-analyzer-mcp",
+    lifespan=lifespan
+)
+
+# RustAnalyzerClient class implementation
+class RustAnalyzerClient:
+    # ... full asyncio-based implementation ...
 
 # MCP Tools
 @mcp.tool
 async def hover(file_path: str, line: int, character: int, ctx: Context) -> Dict[str, Any]:
     """Get hover information at specified position"""
-    # Implementation
+    # Implementation using rust_analyzer client
     pass
 
 # ... additional tools ...
@@ -147,8 +160,18 @@ chmod +x rust-analyzer-mcp.py
 ./rust-analyzer-mcp.py
 ```
 
-## MCP Client Configuration (Claude Desktop)
+## MCP Client Configuration
 
+### Claude Code (CLI)
+```bash
+# Add as project-scoped MCP server
+claude mcp add --scope project rust-analyzer uv run /path/to/rust_analyzer_mcp.py
+
+# Or with wrapper script if ENOENT errors occur
+claude mcp add --scope project rust-analyzer /path/to/run_rust_analyzer_mcp.sh
+```
+
+### Claude Desktop
 ```json
 {
   "mcpServers": {
@@ -169,6 +192,11 @@ chmod +x rust-analyzer-mcp.py
 3. Support for all rust-analyzer LSP features
 4. Documentation in script comments
 5. Example usage patterns
+6. Complete test suite with pytest
+   - Unit tests for LSP client components
+   - Integration tests with real rust-analyzer
+   - Mock-based tests for MCP tool functions
+   - 59 total tests with 100% pass rate
 
 ## Research Summary
 
@@ -192,5 +220,43 @@ chmod +x rust-analyzer-mcp.py
 - Asynchronous request/response correlation required
 - Notification handling for diagnostics and other server-initiated messages
 - Proper subprocess lifecycle management critical
+
+## Implementation Lessons Learned
+
+### Version Requirements
+- **Python >= 3.10**: Required by FastMCP dependency chain
+- **FastMCP >= 0.3.0**: Minimum version for stable API
+- **rust-analyzer**: Any recent version (protocol is stable)
+- **uv script metadata**: Must include `requires-python = ">=3.10"`
+
+### API Compatibility Issues Resolved
+1. **FastMCP Initialization**: 
+   - ❌ `FastMCP(version="0.1.0")` - version parameter not supported
+   - ✅ `FastMCP(name="rust-analyzer-mcp")` - correct initialization
+   
+2. **Lifecycle Management**:
+   - ❌ `@mcp.server.on_initialize` - deprecated pattern
+   - ✅ `lifespan` parameter with asynccontextmanager - proper pattern
+
+3. **Tool Function Access**:
+   - ❌ Direct function calls in tests fail
+   - ✅ Access via `.fn` attribute on decorated functions
+
+4. **Semantic Tokens Capability**:
+   - ❌ Missing `formats` field causes rust-analyzer errors
+   - ✅ Must include `"formats": ["relative"]` in capability
+
+### rust-analyzer Integration Insights
+1. **Asynchronous Indexing**: rust-analyzer may return `None` while indexing
+2. **File Synchronization**: Not required for read-only operations
+3. **Diagnostics**: Published via notifications, not request/response
+4. **Error Handling**: "content modified" errors are normal during rapid operations
+5. **Subprocess Management**: Clean shutdown prevents zombie processes
+
+### Claude Code Integration
+1. **Command Parsing**: Claude Code may treat full command strings as single executables
+2. **Wrapper Scripts**: Shell scripts can work around command parsing issues
+3. **MCP Tool Naming**: Tools are prefixed as `mcp__<serverName>__<toolName>`
+4. **Security**: Use `--allowedTools` flag to explicitly permit MCP tools
 
 This requirements document outlines a comprehensive MCP server that will make rust-analyzer's full feature set available through the Model Context Protocol. The implementation will prioritize reliability, completeness, and ease of use.
