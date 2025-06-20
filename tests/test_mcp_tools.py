@@ -91,15 +91,19 @@ class TestLanguageFeatureTools:
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
             result = await rust_analyzer_mcp.completion.fn(
-                "src/main.rs", 5, 10, limit=50, offset=0, include_detail=False, ctx=ctx
+                "src/main.rs", 5, 10, limit=50, offset=0, 
+                include_detail=False, include_documentation=False, ctx=ctx
             )
         
         assert isinstance(result, dict)
         assert len(result["items"]) == 2
         assert result["items"][0]["label"] == "print!"  # Sorted alphabetically
         assert result["items"][1]["label"] == "println!"
-        assert "documentation" not in result["items"][0]  # Should be stripped
-        assert "detail" not in result["items"][1]  # Should be stripped
+        assert result["items"][0]["kind"] == 15
+        assert result["items"][0]["offset"] == 0
+        assert result["items"][1]["offset"] == 1
+        assert "documentation" not in result["items"][0]  # Should not be included
+        assert "detail" not in result["items"][1]  # Should not be included
         assert result["totalItems"] == 2
         assert not result["hasMore"]
         assert result["offset"] == 0
@@ -117,33 +121,37 @@ class TestLanguageFeatureTools:
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            # Test first page
+            # Test first page with detail but no documentation
             result = await rust_analyzer_mcp.completion.fn(
-                "src/main.rs", 5, 10, limit=20, offset=0, include_detail=True, ctx=ctx
+                "src/main.rs", 5, 10, limit=20, offset=0, 
+                include_detail=True, include_documentation=False, ctx=ctx
             )
         
         assert isinstance(result, dict)
         assert len(result["items"]) == 20  # Limited to 20
         assert result["items"][0]["label"] == "test_0"
-        assert "documentation" in result["items"][0]  # Should be kept with include_detail=True
+        assert result["items"][0]["offset"] == 0
+        assert "documentation" not in result["items"][0]  # Not included
         assert result["totalItems"] == 100
         assert result["hasMore"]
         assert result["nextOffset"] == 20
         
-        # Test pagination - second page
+        # Test getting specific item using offset
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result2 = await rust_analyzer_mcp.completion.fn(
-                "src/main.rs", 5, 10, limit=20, offset=20, include_detail=False, ctx=ctx
+            # Get single item at offset 42
+            result_single = await rust_analyzer_mcp.completion.fn(
+                "src/main.rs", 5, 10, limit=1, offset=42, 
+                include_detail=True, include_documentation=True, ctx=ctx
             )
         
-        assert len(result2["items"]) == 20
-        # Items are sorted, so test_27, test_28... come after test_2 in alphabetical order
-        assert result2["items"][0]["label"].startswith("test_")
-        assert "documentation" not in result2["items"][0]  # Stripped
-        assert result2["offset"] == 20
-        assert result2["hasMore"]
-        assert result2["nextOffset"] == 40
+        assert len(result_single["items"]) == 1
+        # Items are sorted, so we get whatever is at position 42 after sorting
+        assert result_single["items"][0]["label"].startswith("test_")
+        assert result_single["items"][0]["offset"] == 42
+        assert "documentation" in result_single["items"][0]  # Included
+        assert result_single["offset"] == 42
+        assert result_single["hasMore"]  # More items after this one
     
     async def test_definition_tool(self):
         """Test definition tool."""

@@ -544,7 +544,8 @@ async def completion(
     character: int, 
     limit: int = 50,
     offset: int = 0,
-    include_detail: bool = False,
+    include_detail: bool = True,
+    include_documentation: bool = False,
     ctx: Context = None
 ) -> Dict[str, Any]:
     """Get code completions at the specified position.
@@ -555,10 +556,13 @@ async def completion(
         character: Zero-based character offset in the line
         limit: Maximum number of completions to return (default: 50)
         offset: Number of items to skip for pagination (default: 0)
-        include_detail: Whether to include detailed documentation (default: False)
+        include_detail: Include type signatures and other details (default: True)
+        include_documentation: Include documentation strings (default: False)
         
     Returns:
-        Dictionary with completion items and metadata for pagination
+        Dictionary with completion items and metadata for pagination.
+        Each item includes its absolute offset for direct retrieval.
+        To get a specific item, use its offset with limit=1.
     """
     client = ensure_rust_analyzer()
     file_uri = ensure_file_uri(file_path)
@@ -604,28 +608,35 @@ async def completion(
     # Check if there are more items available
     has_more = end_idx < total_items
     
-    # Strip documentation if not requested to reduce token count
-    if not include_detail:
-        for item in items:
-            # Remove large fields to reduce token count
-            item.pop("documentation", None)
-            item.pop("detail", None)
-            item.pop("additionalTextEdits", None)
-            # Keep only essential fields
-            essential_fields = ["label", "kind", "insertText", "insertTextFormat", "sortText", "filterText"]
-            for key in list(item.keys()):
-                if key not in essential_fields:
-                    item.pop(key, None)
+    # Process items to include only requested fields
+    processed_items = []
+    for i, item in enumerate(items):
+        processed_item = {
+            "label": item.get("label", ""),
+            "kind": item.get("kind"),
+            "offset": start_idx + i  # Absolute offset for this item
+        }
+        
+        # Include detail if requested (type signatures, etc.)
+        if include_detail and "detail" in item:
+            processed_item["detail"] = item["detail"]
+            
+        # Include documentation if requested
+        if include_documentation and "documentation" in item:
+            processed_item["documentation"] = item["documentation"]
+            
+        processed_items.append(processed_item)
     
     return {
-        "items": items,
+        "items": processed_items,
         "isIncomplete": is_incomplete,
         "totalItems": total_items,
         "offset": offset,
         "limit": limit,
         "hasMore": has_more,
         "nextOffset": end_idx if has_more else None,
-        "includeDetail": include_detail
+        "includeDetail": include_detail,
+        "includeDocumentation": include_documentation
     }
 
 
