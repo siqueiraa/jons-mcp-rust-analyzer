@@ -538,21 +538,31 @@ async def hover(file_path: str, line: int, character: int, ctx: Context) -> Dict
 
 
 @mcp.tool
-async def completion(file_path: str, line: int, character: int, ctx: Context) -> List[Dict[str, Any]]:
+async def completion(
+    file_path: str, 
+    line: int, 
+    character: int, 
+    limit: int = 50,
+    include_detail: bool = False,
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Get code completions at the specified position.
     
     Args:
         file_path: Path to the Rust file
         line: Zero-based line number
         character: Zero-based character offset in the line
+        limit: Maximum number of completions to return (default: 50)
+        include_detail: Whether to include detailed documentation (default: False)
         
     Returns:
-        List of completion items with labels, kinds, and documentation
+        Dictionary with completion items and metadata
     """
     client = ensure_rust_analyzer()
     file_uri = ensure_file_uri(file_path)
     
-    await ctx.info(f"Getting completions at {file_path}:{line}:{character}")
+    if ctx:
+        await ctx.info(f"Getting completions at {file_path}:{line}:{character} (limit: {limit})")
     
     response = await client.request("textDocument/completion", {
         "textDocument": {"uri": file_uri},
@@ -560,12 +570,39 @@ async def completion(file_path: str, line: int, character: int, ctx: Context) ->
     })
     
     # Handle both array and CompletionList responses
+    items = []
+    is_incomplete = False
+    
     if isinstance(response, list):
-        return response
-    elif isinstance(response, dict) and "items" in response:
-        return response["items"]
-    else:
-        return []
+        items = response
+    elif isinstance(response, dict):
+        items = response.get("items", [])
+        is_incomplete = response.get("isIncomplete", False)
+    
+    # Limit the number of items
+    total_items = len(items)
+    items = items[:limit]
+    
+    # Strip documentation if not requested to reduce token count
+    if not include_detail:
+        for item in items:
+            # Remove large fields to reduce token count
+            item.pop("documentation", None)
+            item.pop("detail", None)
+            item.pop("additionalTextEdits", None)
+            # Keep only essential fields
+            essential_fields = ["label", "kind", "insertText", "insertTextFormat", "sortText", "filterText"]
+            for key in list(item.keys()):
+                if key not in essential_fields:
+                    item.pop(key, None)
+    
+    return {
+        "items": items,
+        "isIncomplete": is_incomplete or total_items > limit,
+        "totalItems": total_items,
+        "limitApplied": limit,
+        "includeDetail": include_detail
+    }
 
 
 @mcp.tool

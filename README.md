@@ -9,6 +9,8 @@ Exposes all rust-analyzer capabilities as MCP tools:
 ### Core Language Features
 - **hover** - Get type information and documentation at any position
 - **completion** - Get code completions with auto-import support
+  - `limit`: Maximum completions to return (default: 50)
+  - `include_detail`: Include documentation/details (default: false)
 - **definition** - Jump to definition of symbols
 - **type_definition** - Jump to type definitions
 - **implementation** - Find trait implementations
@@ -286,6 +288,22 @@ Make it executable and use it instead:
 chmod +x run_rust_analyzer_mcp.sh
 claude mcp add --scope project rust_analyzer /path/to/run_rust_analyzer_mcp.sh
 ```
+
+### Token limit exceeded errors
+
+If you get "response exceeds maximum allowed tokens" errors with the completion tool:
+
+1. Use the `limit` parameter to reduce completions:
+   ```
+   "Get completions at line 42 with limit 20"
+   ```
+
+2. Disable detailed documentation:
+   ```
+   "Get completions without documentation"
+   ```
+
+3. The completion tool automatically strips documentation by default to prevent token limit issues
 
 ## License
 

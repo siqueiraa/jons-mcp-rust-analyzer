@@ -84,32 +84,43 @@ class TestLanguageFeatureTools:
         mock_client = AsyncMock()
         mock_client._initialized = True
         mock_client.request = AsyncMock(return_value=[
-            {"label": "println!", "kind": 15},
-            {"label": "print!", "kind": 15}
+            {"label": "println!", "kind": 15, "documentation": "Large docs"},
+            {"label": "print!", "kind": 15, "detail": "macro_rules! print"}
         ])
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, ctx)
+            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, limit=50, include_detail=False, ctx=ctx)
         
-        assert len(result) == 2
-        assert result[0]["label"] == "println!"
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 2
+        assert result["items"][0]["label"] == "println!"
+        assert "documentation" not in result["items"][0]  # Should be stripped
+        assert "detail" not in result["items"][1]  # Should be stripped
+        assert result["totalItems"] == 2
+        assert not result["isIncomplete"]
     
     async def test_completion_tool_with_completion_list(self):
         """Test completion tool with CompletionList response."""
         mock_client = AsyncMock()
         mock_client._initialized = True
+        # Simulate a large completion list that would be limited
+        items = [{"label": f"test_{i}", "kind": 6, "documentation": f"Docs for test_{i}"} for i in range(100)]
         mock_client.request = AsyncMock(return_value={
-            "isIncomplete": False,
-            "items": [{"label": "test"}]
+            "isIncomplete": True,
+            "items": items
         })
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, ctx)
+            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, limit=20, include_detail=True, ctx=ctx)
         
-        assert len(result) == 1
-        assert result[0]["label"] == "test"
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 20  # Limited to 20
+        assert result["items"][0]["label"] == "test_0"
+        assert "documentation" in result["items"][0]  # Should be kept with include_detail=True
+        assert result["totalItems"] == 100
+        assert result["isIncomplete"]  # True because we limited the results
     
     async def test_definition_tool(self):
         """Test definition tool."""
