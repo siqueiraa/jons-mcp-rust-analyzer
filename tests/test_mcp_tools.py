@@ -189,10 +189,15 @@ class TestLanguageFeatureTools:
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
             result = await rust_analyzer_mcp.references.fn(
-                "src/main.rs", 10, 5, include_declaration=True, ctx=ctx
+                "src/main.rs", 10, 5, include_declaration=True, limit=50, offset=0, ctx=ctx
             )
         
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 2
+        assert result["items"][0]["offset"] == 0
+        assert result["items"][1]["offset"] == 1
+        assert result["totalItems"] == 2
+        assert not result["hasMore"]
         # Check that the request was made with correct parameters
         mock_client.request.assert_called_once()
         call_args = mock_client.request.call_args
@@ -216,10 +221,15 @@ class TestLanguageFeatureTools:
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.document_symbols.fn("src/main.rs", ctx)
+            result = await rust_analyzer_mcp.document_symbols.fn("src/main.rs", limit=50, offset=0, ctx=ctx)
         
-        assert len(result) == 1
-        assert result[0]["name"] == "main"
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 1
+        assert result["items"][0]["name"] == "main"
+        assert result["items"][0]["fullName"] == "main"
+        assert result["items"][0]["offset"] == 0
+        assert result["totalItems"] == 1
+        assert not result["hasMore"]
     
     async def test_workspace_symbols_tool(self):
         """Test workspace symbols tool."""
@@ -238,10 +248,14 @@ class TestLanguageFeatureTools:
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.workspace_symbols.fn("Calc", ctx)
+            result = await rust_analyzer_mcp.workspace_symbols.fn("Calc", limit=50, offset=0, ctx=ctx)
         
-        assert len(result) == 1
-        assert result[0]["name"] == "Calculator"
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 1
+        assert result["items"][0]["name"] == "Calculator"
+        assert result["items"][0]["offset"] == 0
+        assert result["totalItems"] == 1
+        assert not result["hasMore"]
 
 
 @pytest.mark.asyncio
@@ -252,32 +266,47 @@ class TestCodeIntelligenceTools:
         """Test diagnostics tool for all files."""
         rust_analyzer_mcp.current_diagnostics = {
             "file:///src/main.rs": [
-                {"severity": 1, "message": "Error 1"}
+                {"severity": 1, "message": "Error 1", "range": {"start": {"line": 5, "character": 0}}}
             ],
             "file:///src/lib.rs": [
-                {"severity": 2, "message": "Warning 1"}
+                {"severity": 2, "message": "Warning 1", "range": {"start": {"line": 10, "character": 0}}}
             ]
         }
         
-        result = await rust_analyzer_mcp.diagnostics.fn()
-        assert len(result) == 2
-        assert "file:///src/main.rs" in result
-        assert "file:///src/lib.rs" in result
+        result = await rust_analyzer_mcp.diagnostics.fn(limit=50, offset=0)
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 2
+        # Error comes first due to severity sorting
+        assert result["items"][0]["severity"] == 1
+        assert result["items"][0]["uri"] == "file:///src/main.rs"
+        assert result["items"][0]["offset"] == 0
+        assert result["items"][1]["severity"] == 2
+        assert result["items"][1]["offset"] == 1
+        assert result["totalItems"] == 2
+        assert not result["hasMore"]
     
     async def test_diagnostics_tool_specific_file(self):
         """Test diagnostics tool for specific file."""
+        # Use absolute path for test
+        test_file = "/test/src/main.rs"
         rust_analyzer_mcp.current_diagnostics = {
-            "file:///src/main.rs": [
-                {"severity": 1, "message": "Error 1"}
+            f"file://{test_file}": [
+                {"severity": 1, "message": "Error 1", "range": {"start": {"line": 0, "character": 0}}}
             ],
-            "file:///src/lib.rs": []
+            "file:///test/src/lib.rs": []
         }
         
-        result = await rust_analyzer_mcp.diagnostics.fn("src/main.rs")
-        assert len(result) == 1
-        # Check that the URI in the result ends with the expected path
-        uri = list(result.keys())[0]
-        assert uri.endswith("/src/main.rs")
+        # Mock ensure_file_uri to return the expected URI
+        with patch.object(rust_analyzer_mcp, "ensure_file_uri", return_value=f"file://{test_file}"):
+            result = await rust_analyzer_mcp.diagnostics.fn(test_file, limit=50, offset=0)
+        
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 1
+        assert result["items"][0]["message"] == "Error 1"
+        assert result["items"][0]["uri"] == f"file://{test_file}"
+        assert result["items"][0]["offset"] == 0
+        assert result["totalItems"] == 1
+        assert not result["hasMore"]
     
     async def test_code_actions_tool(self):
         """Test code actions tool."""

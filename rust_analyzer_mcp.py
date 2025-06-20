@@ -716,7 +716,15 @@ async def implementation(file_path: str, line: int, character: int, ctx: Context
 
 
 @mcp.tool
-async def references(file_path: str, line: int, character: int, include_declaration: bool = True, ctx: Context = None) -> List[Dict[str, Any]]:
+async def references(
+    file_path: str,
+    line: int,
+    character: int,
+    include_declaration: bool = True,
+    limit: int = 50,
+    offset: int = 0,
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Find all references to the symbol at the specified position.
     
     Args:
@@ -724,15 +732,19 @@ async def references(file_path: str, line: int, character: int, include_declarat
         line: Zero-based line number
         character: Zero-based character offset in the line
         include_declaration: Whether to include the declaration itself
+        limit: Maximum references to return (default: 50)
+        offset: Number of items to skip for pagination (default: 0)
         
     Returns:
-        List of reference locations
+        Dictionary with references and pagination metadata.
+        Each reference includes its absolute offset for direct retrieval.
+        To get a specific reference, use its offset with limit=1.
     """
     client = ensure_rust_analyzer()
     file_uri = ensure_file_uri(file_path)
     
     if ctx:
-        await ctx.info(f"Finding references at {file_path}:{line}:{character}")
+        await ctx.info(f"Finding references at {file_path}:{line}:{character} (limit: {limit}, offset: {offset})")
     
     response = await client.request("textDocument/references", {
         "textDocument": {"uri": file_uri},
@@ -740,69 +752,266 @@ async def references(file_path: str, line: int, character: int, include_declarat
         "context": {"includeDeclaration": include_declaration}
     })
     
-    return response or []
+    items = response or []
+    
+    # Sort items for stable pagination
+    # Sort by URI, then by line and character
+    def sort_key(item):
+        uri = item.get("uri", "")
+        start = item.get("range", {}).get("start", {})
+        line = start.get("line", 0)
+        char = start.get("character", 0)
+        return (uri, line, char)
+    
+    items.sort(key=sort_key)
+    
+    # Apply pagination
+    total_items = len(items)
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    paginated_items = items[start_idx:end_idx]
+    
+    # Add offset to each item
+    processed_items = []
+    for i, item in enumerate(paginated_items):
+        processed_item = item.copy()
+        processed_item["offset"] = start_idx + i
+        processed_items.append(processed_item)
+    
+    has_more = end_idx < total_items
+    
+    return {
+        "items": processed_items,
+        "totalItems": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None
+    }
 
 
 @mcp.tool
-async def document_symbols(file_path: str, ctx: Context) -> List[Dict[str, Any]]:
+async def document_symbols(
+    file_path: str,
+    limit: int = 50,
+    offset: int = 0,
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Get all symbols in a document (functions, structs, traits, etc.).
     
     Args:
         file_path: Path to the Rust file
+        limit: Maximum symbols to return (default: 50)
+        offset: Number of items to skip for pagination (default: 0)
         
     Returns:
-        Hierarchical list of symbols in the document
+        Dictionary with symbols and pagination metadata.
+        Each symbol includes its absolute offset for direct retrieval.
+        Note: Nested symbols are flattened for consistent pagination.
     """
     client = ensure_rust_analyzer()
     file_uri = ensure_file_uri(file_path)
     
-    await ctx.info(f"Getting document symbols for {file_path}")
+    if ctx:
+        await ctx.info(f"Getting document symbols for {file_path} (limit: {limit}, offset: {offset})")
     
     response = await client.request("textDocument/documentSymbol", {
         "textDocument": {"uri": file_uri}
     })
     
-    return response or []
+    symbols = response or []
+    
+    # Flatten hierarchical symbols for pagination
+    def flatten_symbols(symbols, parent_name=""):
+        flat = []
+        for symbol in symbols:
+            # Add parent context to name for clarity
+            if parent_name:
+                symbol["fullName"] = f"{parent_name}::{symbol['name']}"
+            else:
+                symbol["fullName"] = symbol["name"]
+            
+            flat.append(symbol)
+            
+            # Recursively flatten children
+            if "children" in symbol:
+                flat.extend(flatten_symbols(symbol["children"], symbol["fullName"]))
+        return flat
+    
+    items = flatten_symbols(symbols)
+    
+    # Sort items for stable pagination
+    # Sort by line number, then by name
+    def sort_key(item):
+        start = item.get("range", {}).get("start", {})
+        line = start.get("line", 0)
+        name = item.get("fullName", item.get("name", ""))
+        return (line, name)
+    
+    items.sort(key=sort_key)
+    
+    # Apply pagination
+    total_items = len(items)
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    paginated_items = items[start_idx:end_idx]
+    
+    # Add offset to each item
+    processed_items = []
+    for i, item in enumerate(paginated_items):
+        processed_item = item.copy()
+        processed_item["offset"] = start_idx + i
+        # Remove children from paginated results as they're flattened
+        processed_item.pop("children", None)
+        processed_items.append(processed_item)
+    
+    has_more = end_idx < total_items
+    
+    return {
+        "items": processed_items,
+        "totalItems": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None
+    }
 
 
 @mcp.tool
-async def workspace_symbols(query: str, ctx: Context) -> List[Dict[str, Any]]:
+async def workspace_symbols(
+    query: str,
+    limit: int = 50,
+    offset: int = 0,
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Search for symbols across the entire workspace.
     
     Args:
         query: Search query (can be partial name)
+        limit: Maximum symbols to return (default: 50)
+        offset: Number of items to skip for pagination (default: 0)
         
     Returns:
-        List of matching symbols with their locations
+        Dictionary with symbols and pagination metadata.
+        Each symbol includes its absolute offset for direct retrieval.
+        To get a specific symbol, use its offset with limit=1.
     """
     client = ensure_rust_analyzer()
     
-    await ctx.info(f"Searching workspace symbols: {query}")
+    if ctx:
+        await ctx.info(f"Searching workspace symbols: {query} (limit: {limit}, offset: {offset})")
     
     response = await client.request("workspace/symbol", {
         "query": query
     })
     
-    return response or []
+    items = response or []
+    
+    # Sort items for stable pagination
+    # Sort by name, then by location for consistency
+    def sort_key(item):
+        name = item.get("name", "")
+        location = item.get("location", {})
+        uri = location.get("uri", "")
+        line = location.get("range", {}).get("start", {}).get("line", 0)
+        return (name, uri, line)
+    
+    items.sort(key=sort_key)
+    
+    # Apply pagination
+    total_items = len(items)
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    paginated_items = items[start_idx:end_idx]
+    
+    # Add offset to each item
+    processed_items = []
+    for i, item in enumerate(paginated_items):
+        processed_item = item.copy()
+        processed_item["offset"] = start_idx + i
+        processed_items.append(processed_item)
+    
+    has_more = end_idx < total_items
+    
+    return {
+        "items": processed_items,
+        "totalItems": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None
+    }
 
 
 # MCP Tools - Code Intelligence
 
 @mcp.tool
-async def diagnostics(file_path: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+async def diagnostics(
+    file_path: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> Dict[str, Any]:
     """Get current diagnostics (errors, warnings) for file(s).
     
     Args:
         file_path: Optional path to specific file. If None, returns all diagnostics.
+        limit: Maximum diagnostics to return (default: 50)
+        offset: Number of items to skip for pagination (default: 0)
         
     Returns:
-        Dictionary mapping file URIs to their diagnostics
+        Dictionary with flattened diagnostics and pagination metadata.
+        Each diagnostic includes its file URI and absolute offset.
     """
+    # Get diagnostics
     if file_path:
         file_uri = ensure_file_uri(file_path)
-        return {file_uri: current_diagnostics.get(file_uri, [])}
+        file_diagnostics = {file_uri: current_diagnostics.get(file_uri, [])}
     else:
-        return current_diagnostics
+        file_diagnostics = current_diagnostics
+    
+    # Flatten diagnostics with file info
+    items = []
+    for uri, diags in file_diagnostics.items():
+        for diag in diags:
+            item = diag.copy()
+            item["uri"] = uri
+            items.append(item)
+    
+    # Sort items for stable pagination
+    # Sort by severity (errors first), then by URI, then by line
+    def sort_key(item):
+        severity = item.get("severity", 999)  # Lower is more severe
+        uri = item.get("uri", "")
+        start = item.get("range", {}).get("start", {})
+        line = start.get("line", 0)
+        char = start.get("character", 0)
+        return (severity, uri, line, char)
+    
+    items.sort(key=sort_key)
+    
+    # Apply pagination
+    total_items = len(items)
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    paginated_items = items[start_idx:end_idx]
+    
+    # Add offset to each item
+    processed_items = []
+    for i, item in enumerate(paginated_items):
+        processed_item = item.copy()
+        processed_item["offset"] = start_idx + i
+        processed_items.append(processed_item)
+    
+    has_more = end_idx < total_items
+    
+    return {
+        "items": processed_items,
+        "totalItems": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None
+    }
 
 
 @mcp.tool

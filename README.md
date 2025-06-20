@@ -19,11 +19,24 @@ Exposes all rust-analyzer capabilities as MCP tools:
 - **type_definition** - Jump to type definitions
 - **implementation** - Find trait implementations
 - **references** - Find all usages of a symbol
+  - `limit`: Maximum references to return (default: 50)
+  - `offset`: Number of items to skip for pagination (default: 0)
+  - Returns: References sorted by file URI and position
 - **document_symbols** - List all symbols in a file
+  - `limit`: Maximum symbols to return (default: 50)
+  - `offset`: Number of items to skip for pagination (default: 0)
+  - Returns: Flattened symbols with parent context, sorted by line number
 - **workspace_symbols** - Search symbols across the workspace
+  - `limit`: Maximum symbols to return (default: 50)
+  - `offset`: Number of items to skip for pagination (default: 0)
+  - Returns: Symbols sorted by name and location
 
 ### Code Intelligence
 - **diagnostics** - Get compiler errors and warnings
+  - `file_path`: Optional path to filter diagnostics for specific file
+  - `limit`: Maximum diagnostics to return (default: 50)
+  - `offset`: Number of items to skip for pagination (default: 0)
+  - Returns: Flattened diagnostics sorted by severity (errors first)
 - **code_actions** - Get available fixes and refactorings
 - **rename** - Rename symbols across the project
 - **semantic_tokens** - Get semantic syntax highlighting
