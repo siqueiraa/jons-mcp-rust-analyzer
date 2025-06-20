@@ -543,6 +543,7 @@ async def completion(
     line: int, 
     character: int, 
     limit: int = 50,
+    offset: int = 0,
     include_detail: bool = False,
     ctx: Context = None
 ) -> Dict[str, Any]:
@@ -553,16 +554,17 @@ async def completion(
         line: Zero-based line number
         character: Zero-based character offset in the line
         limit: Maximum number of completions to return (default: 50)
+        offset: Number of items to skip for pagination (default: 0)
         include_detail: Whether to include detailed documentation (default: False)
         
     Returns:
-        Dictionary with completion items and metadata
+        Dictionary with completion items and metadata for pagination
     """
     client = ensure_rust_analyzer()
     file_uri = ensure_file_uri(file_path)
     
     if ctx:
-        await ctx.info(f"Getting completions at {file_path}:{line}:{character} (limit: {limit})")
+        await ctx.info(f"Getting completions at {file_path}:{line}:{character} (limit: {limit}, offset: {offset})")
     
     response = await client.request("textDocument/completion", {
         "textDocument": {"uri": file_uri},
@@ -579,9 +581,28 @@ async def completion(
         items = response.get("items", [])
         is_incomplete = response.get("isIncomplete", False)
     
-    # Limit the number of items
+    # Sort items to ensure stable pagination
+    # Primary sort by sortText (if available), fallback to label
+    # This ensures consistent ordering across multiple requests
+    def sort_key(item):
+        # rust-analyzer provides sortText for proper ordering
+        sort_text = item.get("sortText", item.get("label", ""))
+        # Secondary sort by label for items with same sortText
+        label = item.get("label", "")
+        return (sort_text, label)
+    
+    items.sort(key=sort_key)
+    
+    # Apply pagination
     total_items = len(items)
-    items = items[:limit]
+    
+    # Apply offset and limit
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    items = items[start_idx:end_idx]
+    
+    # Check if there are more items available
+    has_more = end_idx < total_items
     
     # Strip documentation if not requested to reduce token count
     if not include_detail:
@@ -598,9 +619,12 @@ async def completion(
     
     return {
         "items": items,
-        "isIncomplete": is_incomplete or total_items > limit,
+        "isIncomplete": is_incomplete,
         "totalItems": total_items,
-        "limitApplied": limit,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None,
         "includeDetail": include_detail
     }
 

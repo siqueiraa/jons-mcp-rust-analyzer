@@ -10,7 +10,9 @@ Exposes all rust-analyzer capabilities as MCP tools:
 - **hover** - Get type information and documentation at any position
 - **completion** - Get code completions with auto-import support
   - `limit`: Maximum completions to return (default: 50)
+  - `offset`: Number of items to skip for pagination (default: 0)
   - `include_detail`: Include documentation/details (default: false)
+  - Returns: Items are sorted by sortText/label for stable pagination
 - **definition** - Jump to definition of symbols
 - **type_definition** - Jump to type definitions
 - **implementation** - Find trait implementations
@@ -303,7 +305,17 @@ If you get "response exceeds maximum allowed tokens" errors with the completion 
    "Get completions without documentation"
    ```
 
-3. The completion tool automatically strips documentation by default to prevent token limit issues
+3. Use pagination to get more results:
+   ```
+   "Get next 20 completions starting at offset 20"
+   ```
+
+4. The completion tool automatically strips documentation by default to prevent token limit issues
+
+The response includes pagination metadata:
+- `totalItems`: Total number of available completions
+- `hasMore`: Whether more items are available
+- `nextOffset`: Offset to use for the next page
 
 ## License
 

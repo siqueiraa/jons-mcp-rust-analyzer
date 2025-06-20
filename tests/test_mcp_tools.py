@@ -90,15 +90,19 @@ class TestLanguageFeatureTools:
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, limit=50, include_detail=False, ctx=ctx)
+            result = await rust_analyzer_mcp.completion.fn(
+                "src/main.rs", 5, 10, limit=50, offset=0, include_detail=False, ctx=ctx
+            )
         
         assert isinstance(result, dict)
         assert len(result["items"]) == 2
-        assert result["items"][0]["label"] == "println!"
+        assert result["items"][0]["label"] == "print!"  # Sorted alphabetically
+        assert result["items"][1]["label"] == "println!"
         assert "documentation" not in result["items"][0]  # Should be stripped
         assert "detail" not in result["items"][1]  # Should be stripped
         assert result["totalItems"] == 2
-        assert not result["isIncomplete"]
+        assert not result["hasMore"]
+        assert result["offset"] == 0
     
     async def test_completion_tool_with_completion_list(self):
         """Test completion tool with CompletionList response."""
@@ -113,14 +117,33 @@ class TestLanguageFeatureTools:
         
         with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await rust_analyzer_mcp.completion.fn("src/main.rs", 5, 10, limit=20, include_detail=True, ctx=ctx)
+            # Test first page
+            result = await rust_analyzer_mcp.completion.fn(
+                "src/main.rs", 5, 10, limit=20, offset=0, include_detail=True, ctx=ctx
+            )
         
         assert isinstance(result, dict)
         assert len(result["items"]) == 20  # Limited to 20
         assert result["items"][0]["label"] == "test_0"
         assert "documentation" in result["items"][0]  # Should be kept with include_detail=True
         assert result["totalItems"] == 100
-        assert result["isIncomplete"]  # True because we limited the results
+        assert result["hasMore"]
+        assert result["nextOffset"] == 20
+        
+        # Test pagination - second page
+        with patch.object(rust_analyzer_mcp, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result2 = await rust_analyzer_mcp.completion.fn(
+                "src/main.rs", 5, 10, limit=20, offset=20, include_detail=False, ctx=ctx
+            )
+        
+        assert len(result2["items"]) == 20
+        # Items are sorted, so test_27, test_28... come after test_2 in alphabetical order
+        assert result2["items"][0]["label"].startswith("test_")
+        assert "documentation" not in result2["items"][0]  # Stripped
+        assert result2["offset"] == 20
+        assert result2["hasMore"]
+        assert result2["nextOffset"] == 40
     
     async def test_definition_tool(self):
         """Test definition tool."""
