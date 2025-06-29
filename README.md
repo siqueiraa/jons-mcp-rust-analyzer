@@ -1,4 +1,4 @@
-# rust-analyzer MCP Server
+# Jons MCP rust-analyzer
 
 A FastMCP server that exposes all rust-analyzer LSP features through the Model Context Protocol (MCP). This allows AI assistants like Claude to interact with Rust code using rust-analyzer's powerful language intelligence.
 
@@ -62,24 +62,34 @@ Exposes all rust-analyzer capabilities as MCP tools:
 
 ## Installation
 
-The server is designed to be run as a standalone script using `uv`:
+### Using uv (recommended)
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/rust-analyzer-mcp
-cd rust-analyzer-mcp
+git clone https://github.com/jonmmease/jons-mcp-rust-analyzer
+cd jons-mcp-rust-analyzer
 
-# Make the script executable
-chmod +x rust_analyzer_mcp.py
+# Install with uv
+uv pip install -e .
 
-# Run with uv (installs dependencies automatically)
-uv run rust_analyzer_mcp.py
+# Run the server
+uv run jons-mcp-rust-analyzer
 ```
 
-Or install dependencies manually:
+### Using uvx (direct execution)
 
 ```bash
-pip install fastmcp
+# Run directly from GitHub
+uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+```
+
+### Adding to Claude Code as MCP Server
+
+To use this with Claude Code, add it using the CLI:
+
+```bash
+cd /path/to/your/rust/project
+claude mcp add jons-mcp-rust-analyzer --scope project uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
 ## Usage
@@ -95,7 +105,7 @@ Claude Code supports MCP servers through the `claude mcp add` command. To use ru
 cd /path/to/your/rust/project
 
 # Add rust-analyzer as an MCP server for this project
-claude mcp add --scope project rust-analyzer uv run /path/to/rust_analyzer_mcp.py
+claude mcp add jons-mcp-rust-analyzer --scope project uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 
 # Now use Claude Code normally - it will have access to rust-analyzer tools
 claude "what does the function at line 42 in src/main.rs do?"
@@ -105,7 +115,7 @@ claude "what does the function at line 42 in src/main.rs do?"
 
 ```bash
 # Add rust-analyzer globally (you'll need to specify project path when using)
-claude mcp add --scope user rust-analyzer uv run /path/to/rust_analyzer_mcp.py
+claude mcp add jons-mcp-rust-analyzer --scope user uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 
 # When using, make sure you're in a Rust project directory
 cd /path/to/your/rust/project
@@ -116,10 +126,10 @@ claude "find all implementations of the Display trait"
 
 ```bash
 # Add with custom rust-analyzer path
-claude mcp add --scope project rust-analyzer \
+claude mcp add jons-mcp-rust-analyzer --scope project \
   -e RUST_ANALYZER_PATH=/custom/path/to/rust-analyzer \
   -e LOG_LEVEL=DEBUG \
-  -- uv run /path/to/rust_analyzer_mcp.py
+  -- uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
 #### Option 4: Using with --mcp-config flag
@@ -128,9 +138,9 @@ Create an MCP configuration file (`mcp-config.json`):
 
 ```json
 {
-  "rust-analyzer": {
-    "command": "uv",
-    "args": ["run", "/path/to/rust_analyzer_mcp.py"],
+  "jons-mcp-rust-analyzer": {
+    "command": "uvx",
+    "args": ["--from", "git+https://github.com/jonmmease/jons-mcp-rust-analyzer", "jons-mcp-rust-analyzer"],
     "env": {
       "LOG_LEVEL": "INFO"
     }
@@ -151,7 +161,7 @@ claude --mcp-config mcp-config.json "analyze my Rust code"
 claude mcp list
 
 # Remove an MCP server
-claude mcp remove rust-analyzer
+claude mcp remove jons-mcp-rust-analyzer
 
 # Check MCP server status while in Claude Code
 # Type: /mcp
@@ -160,7 +170,7 @@ claude mcp remove rust-analyzer
 **Note**: When using MCP tools, you may need to explicitly allow them with the `--allowedTools` flag for security:
 
 ```bash
-claude --allowedTools "mcp__rust-analyzer__*" "format all files in src/"
+claude --allowedTools "mcp__jons-mcp-rust-analyzer__*" "format all files in src/"
 ```
 
 ### Configuration
@@ -176,9 +186,9 @@ Example with environment variables:
 ```json
 {
   "mcpServers": {
-    "rust-analyzer": {
-      "command": "uv",
-      "args": ["run", "/path/to/rust_analyzer_mcp.py"],
+    "jons-mcp-rust-analyzer": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/jonmmease/jons-mcp-rust-analyzer", "jons-mcp-rust-analyzer"],
       "cwd": "/path/to/your/rust/project",
       "env": {
         "RUST_ANALYZER_PATH": "/custom/path/to/rust-analyzer",
@@ -207,14 +217,16 @@ uv run pytest tests/test_lsp_client.py tests/test_mcp_tools.py
 uv run pytest tests/test_integration.py -m integration
 
 # Run with coverage
-uv run pytest --cov=rust_analyzer_mcp
+uv run pytest --cov=src
 ```
 
 ### Project Structure
 
 ```
-rust-analyzer-mcp/
-├── rust_analyzer_mcp.py      # Main MCP server implementation
+jons-mcp-rust-analyzer/
+├── src/
+│   ├── __init__.py
+│   └── jons_mcp_rust_analyzer.py  # Main MCP server implementation
 ├── requirements.md           # Detailed requirements document
 ├── pyproject.toml           # Python project configuration
 ├── tests/
@@ -287,7 +299,7 @@ The server must be started from a Rust project root containing `Cargo.toml`. Ens
 Enable debug logging:
 ```bash
 export LOG_LEVEL=DEBUG
-uv run rust_analyzer_mcp.py
+uv run jons-mcp-rust-analyzer
 ```
 
 ### Command execution issues
@@ -296,14 +308,14 @@ If you encounter `ENOENT` errors when Claude Code tries to start the MCP server,
 
 ```bash
 #!/bin/bash
-# Save as run_rust_analyzer_mcp.sh
-exec uv run /path/to/rust_analyzer_mcp.py
+# Save as run_jons_mcp_rust_analyzer.sh
+exec uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
 Make it executable and use it instead:
 ```bash
-chmod +x run_rust_analyzer_mcp.sh
-claude mcp add --scope project rust_analyzer /path/to/run_rust_analyzer_mcp.sh
+chmod +x run_jons_mcp_rust_analyzer.sh
+claude mcp add jons-mcp-rust-analyzer --scope project /path/to/run_jons_mcp_rust_analyzer.sh
 ```
 
 ### Token limit exceeded errors
