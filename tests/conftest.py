@@ -15,7 +15,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from rust_analyzer_mcp import RustAnalyzerClient
+from src.jons_mcp_rust_analyzer import RustAnalyzerClient
 
 
 @pytest.fixture

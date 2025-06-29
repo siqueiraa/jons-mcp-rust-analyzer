@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 import pytest
 
-from rust_analyzer_mcp import RustAnalyzerClient
+from src.jons_mcp_rust_analyzer import RustAnalyzerClient
 
 
 @pytest.mark.asyncio

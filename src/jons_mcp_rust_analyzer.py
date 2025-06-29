@@ -1359,11 +1359,16 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-# Main entry point
-if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP server."""
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Run the MCP server
     mcp.run()
+
+
+# Main entry point
+if __name__ == "__main__":
+    main()

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from rust_analyzer_mcp import RustAnalyzerClient, LSPRequestError, Position, Range
+from src.jons_mcp_rust_analyzer import RustAnalyzerClient, LSPRequestError, Position, Range
 
 
 class TestRustAnalyzerClient:
@@ -235,7 +235,7 @@ class TestRustAnalyzerClient:
         
         # Make a request that will timeout (override internal timeout)
         original_timeout = 30.0
-        with patch("rust_analyzer_mcp.asyncio.wait_for") as mock_wait_for:
+        with patch("src.jons_mcp_rust_analyzer.asyncio.wait_for") as mock_wait_for:
             mock_wait_for.side_effect = asyncio.TimeoutError()
             with pytest.raises(LSPRequestError, match="timed out"):
                 await client.request("test")
