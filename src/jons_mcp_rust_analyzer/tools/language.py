@@ -23,9 +23,9 @@ async def hover(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Get type info and docs at position. Lines/chars are 0-indexed."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -56,9 +56,9 @@ async def completion(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Get completions at position. Returns paginated items with offset field."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -129,9 +129,9 @@ async def definition(
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Go to definition of symbol at position."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -155,9 +155,9 @@ async def type_definition(
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Go to type definition of symbol at position."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -181,9 +181,9 @@ async def implementation(
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Find implementations of trait/type at position."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -210,9 +210,9 @@ async def references(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Find all references to symbol. Returns paginated items."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -244,9 +244,9 @@ async def document_symbols(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Get all symbols in file (functions, structs, etc.). Paginated."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -294,9 +294,9 @@ async def workspace_symbols(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Search symbols across workspace. Query can be partial name."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
 
     if ctx:
         await ctx.info(

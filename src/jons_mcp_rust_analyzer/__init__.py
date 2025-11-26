@@ -3,6 +3,8 @@
 from .constants import (
     DEFAULT_PAGINATION_LIMIT,
     DEFAULT_PAGINATION_OFFSET,
+    INDEXING_TIMEOUT,
+    INDEXING_TOKEN,
     LSPMethods,
     READ_BUFFER_SIZE,
     REQUEST_TIMEOUT,
@@ -48,6 +50,8 @@ __all__ = [
     "__version__",
     "DEFAULT_PAGINATION_LIMIT",
     "DEFAULT_PAGINATION_OFFSET",
+    "INDEXING_TIMEOUT",
+    "INDEXING_TOKEN",
     "LSPMethods",
     "READ_BUFFER_SIZE",
     "REQUEST_TIMEOUT",

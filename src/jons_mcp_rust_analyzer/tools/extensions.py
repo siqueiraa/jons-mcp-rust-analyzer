@@ -15,9 +15,9 @@ async def expand_macro(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Expand macro at position. Returns expanded code."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -34,8 +34,8 @@ async def expand_macro(
     return response or {"expansion": "No macro found at this position"}
 
 
-async def analyzer_status(ctx: Context | None = None) -> str:
-    """Get rust-analyzer server status."""
+async def analyzer_status(ctx: Context | None = None) -> dict[str, Any]:
+    """Get rust-analyzer server status including indexing progress."""
     from ..server import ensure_rust_analyzer
 
     client = ensure_rust_analyzer()
@@ -43,9 +43,17 @@ async def analyzer_status(ctx: Context | None = None) -> str:
     if ctx:
         await ctx.info("Getting rust-analyzer status")
 
+    # Get internal status from rust-analyzer
     response = await client.request(LSPMethods.ANALYZER_STATUS, {})
+    internal_status = response if isinstance(response, str) else "Status unavailable"
 
-    return response if isinstance(response, str) else "Status unavailable"
+    # Get indexing status from our tracking
+    indexing_status = client.get_indexing_status()
+
+    return {
+        "indexing": indexing_status,
+        "internalStatus": internal_status,
+    }
 
 
 async def related_tests(
@@ -55,9 +63,9 @@ async def related_tests(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Find tests related to code at position."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -81,9 +89,9 @@ async def runnables(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Get runnable targets (tests, bins, examples) in file."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:

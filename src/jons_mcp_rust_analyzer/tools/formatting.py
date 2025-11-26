@@ -15,9 +15,9 @@ async def format_document(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Format entire file. Returns list of text edits."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -45,9 +45,9 @@ async def format_range(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Format range in file (0-indexed). Returns list of text edits."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:

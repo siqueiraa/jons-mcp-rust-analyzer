@@ -333,3 +333,103 @@ class TestRustAnalyzerClient:
         # Shutting down
         client._shutting_down = True
         assert not client.is_initialized()
+
+    def test_indexing_status_initial(self, tmp_path: Path) -> None:
+        """Test initial indexing status."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        assert not client.is_indexing()
+        assert not client.is_indexing_complete()
+
+        status = client.get_indexing_status()
+        assert status["indexing"] is False
+        assert status["complete"] is False
+        assert status["percentage"] is None
+        assert status["message"] is None
+
+    def test_handle_progress_begin(self, tmp_path: Path) -> None:
+        """Test handling progress begin notification."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        client._handle_progress({
+            "token": "rustAnalyzer/Indexing",
+            "value": {"kind": "begin", "title": "Indexing", "message": "0/100"}
+        })
+
+        assert client.is_indexing()
+        assert not client.is_indexing_complete()
+        status = client.get_indexing_status()
+        assert status["indexing"] is True
+        assert status["percentage"] == 0
+        assert status["message"] == "0/100"
+
+    def test_handle_progress_report(self, tmp_path: Path) -> None:
+        """Test handling progress report notification."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        # Start indexing
+        client._handle_progress({
+            "token": "rustAnalyzer/Indexing",
+            "value": {"kind": "begin"}
+        })
+
+        # Report progress
+        client._handle_progress({
+            "token": "rustAnalyzer/Indexing",
+            "value": {"kind": "report", "percentage": 50, "message": "50/100 (std)"}
+        })
+
+        assert client.is_indexing()
+        status = client.get_indexing_status()
+        assert status["percentage"] == 50
+        assert status["message"] == "50/100 (std)"
+
+    def test_handle_progress_end(self, tmp_path: Path) -> None:
+        """Test handling progress end notification."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        # Start and end indexing
+        client._handle_progress({
+            "token": "rustAnalyzer/Indexing",
+            "value": {"kind": "begin"}
+        })
+        client._handle_progress({
+            "token": "rustAnalyzer/Indexing",
+            "value": {"kind": "end"}
+        })
+
+        assert not client.is_indexing()
+        assert client.is_indexing_complete()
+        status = client.get_indexing_status()
+        assert status["indexing"] is False
+        assert status["complete"] is True
+        assert status["percentage"] == 100
+
+    def test_handle_progress_ignores_other_tokens(self, tmp_path: Path) -> None:
+        """Test that progress handler ignores non-indexing tokens."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        client._handle_progress({
+            "token": "someOther/Token",
+            "value": {"kind": "begin"}
+        })
+
+        assert not client.is_indexing()
+        assert not client.is_indexing_complete()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_indexing_already_complete(self, tmp_path: Path) -> None:
+        """Test wait_for_indexing when already complete."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+        client._indexing_complete.set()
+
+        result = await client.wait_for_indexing(timeout=0.1)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_indexing_timeout(self, tmp_path: Path) -> None:
+        """Test wait_for_indexing timeout."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        result = await client.wait_for_indexing(timeout=0.01)
+        assert result is False

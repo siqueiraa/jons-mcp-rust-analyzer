@@ -3,6 +3,7 @@
 # Timeouts (in seconds)
 REQUEST_TIMEOUT: float = 30.0
 SHUTDOWN_TIMEOUT: float = 5.0
+INDEXING_TIMEOUT: float = 300.0  # 5 minutes max wait for indexing
 
 # Buffer sizes
 READ_BUFFER_SIZE: int = 4096
@@ -49,3 +50,10 @@ class LSPMethods:
     ANALYZER_STATUS = "rust-analyzer/analyzerStatus"
     RELATED_TESTS = "rust-analyzer/relatedTests"
     RUNNABLES = "rust-analyzer/runnables"
+
+    # Progress notifications
+    PROGRESS = "$/progress"
+
+
+# rust-analyzer progress tokens
+INDEXING_TOKEN = "rustAnalyzer/Indexing"

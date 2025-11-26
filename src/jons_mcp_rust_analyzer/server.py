@@ -123,6 +123,27 @@ def ensure_rust_analyzer() -> RustAnalyzerClient:
     return rust_analyzer
 
 
+async def ensure_rust_analyzer_indexed() -> RustAnalyzerClient:
+    """Ensure rust-analyzer is initialized and indexing is complete.
+
+    Returns:
+        The initialized rust-analyzer client
+
+    Raises:
+        RustAnalyzerNotInitializedError: If client is not initialized or indexing times out
+    """
+    client = ensure_rust_analyzer()
+
+    if not client.is_indexing_complete():
+        logger.info("Waiting for rust-analyzer indexing to complete...")
+        if not await client.wait_for_indexing():
+            raise RustAnalyzerNotInitializedError(
+                "rust-analyzer indexing timed out. Try again later."
+            )
+
+    return client
+
+
 # Create FastMCP server instance with lifespan
 mcp = FastMCP(name="rust-analyzer-mcp", lifespan=lifespan)
 

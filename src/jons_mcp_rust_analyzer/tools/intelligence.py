@@ -52,9 +52,9 @@ async def code_actions(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Get available fixes/refactorings for a range (0-indexed)."""
-    from ..server import current_diagnostics, ensure_rust_analyzer
+    from ..server import current_diagnostics, ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
@@ -85,9 +85,9 @@ async def rename(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Rename symbol at position across the project."""
-    from ..server import ensure_rust_analyzer
+    from ..server import ensure_rust_analyzer_indexed
 
-    client = ensure_rust_analyzer()
+    client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
