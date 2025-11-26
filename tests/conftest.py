@@ -2,20 +2,30 @@
 Pytest configuration and fixtures for rust-analyzer-mcp tests.
 """
 
-import asyncio
-import json
-import os
 import shutil
-import tempfile
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Any
+from typing import Any, AsyncGenerator
+
 import pytest
 
 # Add parent directory to path to import rust_analyzer_mcp
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.jons_mcp_rust_analyzer import RustAnalyzerClient
+from src.jons_mcp_rust_analyzer import server as server_module
+
+
+@pytest.fixture(autouse=True)
+def reset_globals() -> None:
+    """Reset global state between tests."""
+    original_client = server_module.rust_analyzer
+    original_diags = server_module.current_diagnostics.copy()
+    yield
+    server_module.rust_analyzer = original_client
+    server_module.current_diagnostics.clear()
+    server_module.current_diagnostics.update(original_diags)
 
 
 @pytest.fixture
@@ -30,11 +40,11 @@ edition = "2021"
 
 [dependencies]
 """)
-    
+
     # Create src directory
     src_dir = tmp_path / "src"
     src_dir.mkdir()
-    
+
     # Create main.rs
     main_rs = src_dir / "main.rs"
     main_rs.write_text("""fn main() {
@@ -55,7 +65,7 @@ mod tests {
     }
 }
 """)
-    
+
     # Create lib.rs
     lib_rs = src_dir / "lib.rs"
     lib_rs.write_text("""//! Test library
@@ -68,11 +78,11 @@ impl Calculator {
     pub fn new() -> Self {
         Self { value: 0 }
     }
-    
+
     pub fn add(&mut self, x: i32) {
         self.value += x;
     }
-    
+
     pub fn get_value(&self) -> i32 {
         self.value
     }
@@ -90,19 +100,23 @@ impl Compute for Adder {
     }
 }
 """)
-    
+
     return tmp_path
 
 
 @pytest.fixture
-async def rust_analyzer_client(temp_rust_project: Path) -> AsyncGenerator[RustAnalyzerClient, None]:
+async def rust_analyzer_client(
+    temp_rust_project: Path,
+) -> AsyncGenerator[RustAnalyzerClient, None]:
     """Create and start a rust-analyzer client for testing."""
     # Check if rust-analyzer is available
-    if not shutil.which("rust-analyzer") and not (Path.home() / ".cargo" / "bin" / "rust-analyzer").exists():
+    if not shutil.which("rust-analyzer") and not (
+        Path.home() / ".cargo" / "bin" / "rust-analyzer"
+    ).exists():
         pytest.skip("rust-analyzer not found")
-    
+
     client = RustAnalyzerClient(temp_rust_project)
-    
+
     try:
         await client.start()
         yield client
@@ -111,7 +125,7 @@ async def rust_analyzer_client(temp_rust_project: Path) -> AsyncGenerator[RustAn
 
 
 @pytest.fixture
-def mock_lsp_messages() -> Dict[str, Any]:
+def mock_lsp_messages() -> dict[str, Any]:
     """Mock LSP messages for testing."""
     return {
         "initialize_response": {
@@ -120,7 +134,7 @@ def mock_lsp_messages() -> Dict[str, Any]:
                 "hoverProvider": True,
                 "completionProvider": {
                     "resolveProvider": True,
-                    "triggerCharacters": [".", ":", "::", "->"]
+                    "triggerCharacters": [".", ":", "::", "->"],
                 },
                 "definitionProvider": True,
                 "typeDefinitionProvider": True,
@@ -128,33 +142,26 @@ def mock_lsp_messages() -> Dict[str, Any]:
                 "referencesProvider": True,
                 "documentSymbolProvider": True,
                 "workspaceSymbolProvider": True,
-                "codeActionProvider": {
-                    "codeActionKinds": ["quickfix", "refactor"]
-                },
-                "renameProvider": {
-                    "prepareProvider": True
-                },
+                "codeActionProvider": {"codeActionKinds": ["quickfix", "refactor"]},
+                "renameProvider": {"prepareProvider": True},
                 "documentFormattingProvider": True,
                 "documentRangeFormattingProvider": True,
                 "semanticTokensProvider": {
-                    "legend": {
-                        "tokenTypes": [],
-                        "tokenModifiers": []
-                    },
+                    "legend": {"tokenTypes": [], "tokenModifiers": []},
                     "full": True,
-                    "range": True
-                }
+                    "range": True,
+                },
             }
         },
         "hover_response": {
             "contents": {
                 "kind": "markdown",
-                "value": "```rust\nfn add(a: i32, b: i32) -> i32\n```\n\nAdds two integers"
+                "value": "```rust\nfn add(a: i32, b: i32) -> i32\n```\n\nAdds two integers",
             },
             "range": {
                 "start": {"line": 4, "character": 3},
-                "end": {"line": 4, "character": 6}
-            }
+                "end": {"line": 4, "character": 6},
+            },
         },
         "completion_response": {
             "items": [
@@ -164,26 +171,26 @@ def mock_lsp_messages() -> Dict[str, Any]:
                     "detail": "macro_rules! println",
                     "documentation": {
                         "kind": "markdown",
-                        "value": "Prints to the standard output, with a newline."
+                        "value": "Prints to the standard output, with a newline.",
                     },
-                    "insertText": "println!(\"$1\")$0",
-                    "insertTextFormat": 2  # Snippet
+                    "insertText": 'println!("$1")$0',
+                    "insertTextFormat": 2,  # Snippet
                 },
                 {
                     "label": "print!",
                     "kind": 15,
                     "detail": "macro_rules! print",
-                    "insertText": "print!(\"$1\")$0",
-                    "insertTextFormat": 2
-                }
+                    "insertText": 'print!("$1")$0',
+                    "insertTextFormat": 2,
+                },
             ]
         },
         "definition_response": {
             "uri": "file:///test/src/main.rs",
             "range": {
                 "start": {"line": 4, "character": 0},
-                "end": {"line": 6, "character": 1}
-            }
+                "end": {"line": 6, "character": 1},
+            },
         },
         "diagnostics_notification": {
             "uri": "file:///test/src/main.rs",
@@ -191,21 +198,13 @@ def mock_lsp_messages() -> Dict[str, Any]:
                 {
                     "range": {
                         "start": {"line": 10, "character": 4},
-                        "end": {"line": 10, "character": 10}
+                        "end": {"line": 10, "character": 10},
                     },
                     "severity": 1,  # Error
                     "code": "E0425",
                     "source": "rust-analyzer",
-                    "message": "cannot find value `unknown` in this scope"
+                    "message": "cannot find value `unknown` in this scope",
                 }
-            ]
-        }
+            ],
+        },
     }
-
-
-@pytest.fixture
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()

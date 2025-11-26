@@ -1,45 +1,25 @@
 # Jons MCP rust-analyzer
 
-A FastMCP server that exposes all rust-analyzer LSP features through the Model Context Protocol (MCP). This allows AI assistants like Claude to interact with Rust code using rust-analyzer's powerful language intelligence.
+A FastMCP server that exposes rust-analyzer LSP features through the Model Context Protocol (MCP). This allows AI assistants like Claude to interact with Rust code using rust-analyzer's powerful language intelligence.
 
 ## Features
 
-Exposes all rust-analyzer capabilities as MCP tools:
+Exposes rust-analyzer capabilities as MCP tools:
 
 ### Core Language Features
 - **hover** - Get type information and documentation at any position
-- **completion** - Get code completions with auto-import support
-  - `limit`: Maximum completions to return (default: 50)
-  - `offset`: Number of items to skip for pagination (default: 0)
-  - `include_detail`: Include type signatures and details (default: true)
-  - `include_documentation`: Include documentation strings (default: false)
-  - Returns: Items with `label`, `kind`, and absolute `offset`
-  - Each item includes its offset for direct retrieval with `limit=1`
+- **completion** - Get code completions with pagination support
 - **definition** - Jump to definition of symbols
 - **type_definition** - Jump to type definitions
 - **implementation** - Find trait implementations
-- **references** - Find all usages of a symbol
-  - `limit`: Maximum references to return (default: 50)
-  - `offset`: Number of items to skip for pagination (default: 0)
-  - Returns: References sorted by file URI and position
-- **document_symbols** - List all symbols in a file
-  - `limit`: Maximum symbols to return (default: 50)
-  - `offset`: Number of items to skip for pagination (default: 0)
-  - Returns: Flattened symbols with parent context, sorted by line number
-- **workspace_symbols** - Search symbols across the workspace
-  - `limit`: Maximum symbols to return (default: 50)
-  - `offset`: Number of items to skip for pagination (default: 0)
-  - Returns: Symbols sorted by name and location
+- **references** - Find all usages of a symbol (paginated)
+- **document_symbols** - List all symbols in a file (paginated)
+- **workspace_symbols** - Search symbols across the workspace (paginated)
 
 ### Code Intelligence
-- **diagnostics** - Get compiler errors and warnings
-  - `file_path`: Optional path to filter diagnostics for specific file
-  - `limit`: Maximum diagnostics to return (default: 50)
-  - `offset`: Number of items to skip for pagination (default: 0)
-  - Returns: Flattened diagnostics sorted by severity (errors first)
+- **diagnostics** - Get compiler errors and warnings (paginated)
 - **code_actions** - Get available fixes and refactorings
 - **rename** - Rename symbols across the project
-- **semantic_tokens** - Get semantic syntax highlighting
 
 ### Formatting
 - **format_document** - Format entire files
@@ -47,12 +27,9 @@ Exposes all rust-analyzer capabilities as MCP tools:
 
 ### rust-analyzer Extensions
 - **expand_macro** - Expand Rust macros
-- **syntax_tree** - View the syntax tree
 - **analyzer_status** - Check analyzer status
-- **view_crate_graph** - Visualize crate dependencies
 - **related_tests** - Find related tests
 - **runnables** - Find runnable targets (tests, binaries)
-- **ssr** - Structural search and replace
 
 ## Requirements
 
@@ -60,9 +37,7 @@ Exposes all rust-analyzer capabilities as MCP tools:
 - rust-analyzer (installed via rustup or available in PATH)
 - A Rust project (the server should be started from the project root)
 
-## Installation
-
-### Using uv (recommended)
+## Local Installation
 
 ```bash
 # Clone the repository
@@ -72,89 +47,38 @@ cd jons-mcp-rust-analyzer
 # Install with uv
 uv pip install -e .
 
-# Run the server
-uv run jons-mcp-rust-analyzer
+# Run the server (from a Rust project directory)
+cd /path/to/your/rust/project
+uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
-### Using uvx (direct execution)
+## Adding to Claude Code
+
+### Local Installation (recommended for development)
+
+```bash
+# Register the MCP server with Claude Code using the local installation
+claude mcp add jons-mcp-rust-analyzer -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+```
+
+### Using uvx (direct from GitHub)
 
 ```bash
 # Run directly from GitHub
-uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+claude mcp add jons-mcp-rust-analyzer -- uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
-### Adding to Claude Code as MCP Server
-
-To use this with Claude Code, add it using the CLI:
-
-```bash
-cd /path/to/your/rust/project
-claude mcp add jons-mcp-rust-analyzer --scope project uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
-```
-
-## Usage
-
-### With Claude Code (CLI)
-
-Claude Code supports MCP servers through the `claude mcp add` command. To use rust-analyzer with Claude Code:
-
-#### Option 1: Add as a project-scoped MCP server
-
-```bash
-# Navigate to your Rust project
-cd /path/to/your/rust/project
-
-# Add rust-analyzer as an MCP server for this project
-claude mcp add jons-mcp-rust-analyzer --scope project uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
-
-# Now use Claude Code normally - it will have access to rust-analyzer tools
-claude "what does the function at line 42 in src/main.rs do?"
-```
-
-#### Option 2: Add as a user-scoped MCP server (global)
-
-```bash
-# Add rust-analyzer globally (you'll need to specify project path when using)
-claude mcp add jons-mcp-rust-analyzer --scope user uvx -- --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
-
-# When using, make sure you're in a Rust project directory
-cd /path/to/your/rust/project
-claude "find all implementations of the Display trait"
-```
-
-#### Option 3: Add with environment variables
+### With environment variables
 
 ```bash
 # Add with custom rust-analyzer path
-claude mcp add jons-mcp-rust-analyzer --scope project \
+claude mcp add jons-mcp-rust-analyzer \
   -e RUST_ANALYZER_PATH=/custom/path/to/rust-analyzer \
   -e LOG_LEVEL=DEBUG \
-  -- uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+  -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
-#### Option 4: Using with --mcp-config flag
-
-Create an MCP configuration file (`mcp-config.json`):
-
-```json
-{
-  "jons-mcp-rust-analyzer": {
-    "command": "uvx",
-    "args": ["--from", "git+https://github.com/jonmmease/jons-mcp-rust-analyzer", "jons-mcp-rust-analyzer"],
-    "env": {
-      "LOG_LEVEL": "INFO"
-    }
-  }
-}
-```
-
-Then use it:
-```bash
-cd /path/to/your/rust/project
-claude --mcp-config mcp-config.json "analyze my Rust code"
-```
-
-#### Managing MCP servers
+### Managing MCP servers
 
 ```bash
 # List configured MCP servers
@@ -167,37 +91,11 @@ claude mcp remove jons-mcp-rust-analyzer
 # Type: /mcp
 ```
 
-**Note**: When using MCP tools, you may need to explicitly allow them with the `--allowedTools` flag for security:
-
-```bash
-claude --allowedTools "mcp__jons-mcp-rust-analyzer__*" "format all files in src/"
-```
-
-### Configuration
-
-The server uses the following configuration options:
+## Configuration
 
 - **Working Directory**: Must be launched from a Rust project root (containing `Cargo.toml`)
 - **rust-analyzer Path**: Can be configured via `RUST_ANALYZER_PATH` environment variable
 - **Logging**: Set `LOG_LEVEL` environment variable (default: INFO)
-
-Example with environment variables:
-
-```json
-{
-  "mcpServers": {
-    "jons-mcp-rust-analyzer": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/jonmmease/jons-mcp-rust-analyzer", "jons-mcp-rust-analyzer"],
-      "cwd": "/path/to/your/rust/project",
-      "env": {
-        "RUST_ANALYZER_PATH": "/custom/path/to/rust-analyzer",
-        "LOG_LEVEL": "DEBUG"
-      }
-    }
-  }
-}
-```
 
 ## Development
 
@@ -216,6 +114,9 @@ uv run pytest tests/test_lsp_client.py tests/test_mcp_tools.py
 # Run integration tests (requires rust-analyzer)
 uv run pytest tests/test_integration.py -m integration
 
+# Type check
+uv run mypy src/jons_mcp_rust_analyzer
+
 # Run with coverage
 uv run pytest --cov=src
 ```
@@ -226,15 +127,26 @@ uv run pytest --cov=src
 jons-mcp-rust-analyzer/
 ├── src/
 │   ├── __init__.py
-│   └── jons_mcp_rust_analyzer.py  # Main MCP server implementation
-├── requirements.md           # Detailed requirements document
-├── pyproject.toml           # Python project configuration
+│   └── jons_mcp_rust_analyzer/
+│       ├── __init__.py          # Package exports
+│       ├── constants.py         # Timeouts, LSP method constants
+│       ├── exceptions.py        # Custom exception classes
+│       ├── utils.py             # Pagination, file URI helpers
+│       ├── lsp_client.py        # RustAnalyzerClient
+│       ├── server.py            # FastMCP server setup
+│       └── tools/
+│           ├── __init__.py      # Re-exports all tools
+│           ├── language.py      # hover, completion, definition, etc.
+│           ├── intelligence.py  # diagnostics, code_actions, rename
+│           ├── formatting.py    # format_document, format_range
+│           └── extensions.py    # expand_macro, analyzer_status, etc.
 ├── tests/
-│   ├── conftest.py          # Pytest fixtures
-│   ├── test_lsp_client.py   # Unit tests for LSP client
-│   ├── test_mcp_tools.py    # Unit tests for MCP tools
-│   └── test_integration.py  # Integration tests
-└── README.md                # This file
+│   ├── conftest.py              # Pytest fixtures
+│   ├── test_lsp_client.py       # Unit tests for LSP client
+│   ├── test_mcp_tools.py        # Unit tests for MCP tools
+│   └── test_integration.py      # Integration tests
+├── pyproject.toml               # Python project configuration
+└── README.md                    # This file
 ```
 
 ## Example Usage in Claude Code
@@ -254,14 +166,7 @@ claude "rename the Config struct to Configuration throughout the codebase"
 claude "format all files in the src directory"
 claude "expand the vec! macro at line 15 in main.rs"
 claude "find all tests related to the Parser struct"
-
-# More complex requests
-claude "analyze the error handling in the network module and suggest improvements"
-claude "explain how the lifetime parameters work in the Cache implementation"
-claude "find all TODO comments and create a summary"
 ```
-
-The MCP server provides Claude Code with deep understanding of your Rust code through rust-analyzer's semantic analysis.
 
 ## How It Works
 
@@ -292,64 +197,20 @@ export RUST_ANALYZER_PATH=/path/to/rust-analyzer
 
 ### No Cargo.toml found
 
-The server must be started from a Rust project root containing `Cargo.toml`. Ensure the `cwd` in your MCP configuration points to your Rust project.
+The server must be started from a Rust project root containing `Cargo.toml`. Ensure the working directory is your Rust project.
 
 ### Debugging
 
 Enable debug logging:
 ```bash
-export LOG_LEVEL=DEBUG
-uv run jons-mcp-rust-analyzer
+LOG_LEVEL=DEBUG uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ```
 
-### Command execution issues
+### Pagination
 
-If you encounter `ENOENT` errors when Claude Code tries to start the MCP server, create a wrapper script:
-
-```bash
-#!/bin/bash
-# Save as run_jons_mcp_rust_analyzer.sh
-exec uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
-```
-
-Make it executable and use it instead:
-```bash
-chmod +x run_jons_mcp_rust_analyzer.sh
-claude mcp add jons-mcp-rust-analyzer --scope project /path/to/run_jons_mcp_rust_analyzer.sh
-```
-
-### Token limit exceeded errors
-
-If you get "response exceeds maximum allowed tokens" errors with the completion tool:
-
-1. Use the `limit` parameter to reduce completions:
-   ```
-   "Get completions at line 42 with limit 20"
-   ```
-
-2. Disable documentation (already off by default):
-   ```
-   "Get completions without documentation"
-   ```
-
-3. Disable type details if needed:
-   ```
-   "Get completions without details"
-   ```
-
-4. Use pagination to browse through results:
-   ```
-   "Get next 20 completions starting at offset 20"
-   ```
-
-5. Get a specific completion using its offset:
-   ```
-   "Get the completion at offset 42"
-   ```
-
-The response includes:
+List-returning tools support `limit` and `offset` parameters for pagination. The response includes:
 - Each item has an `offset` field for direct retrieval
-- `totalItems`: Total number of available completions
+- `totalItems`: Total number of available items
 - `hasMore`: Whether more items are available
 - `nextOffset`: Offset to use for the next page
 

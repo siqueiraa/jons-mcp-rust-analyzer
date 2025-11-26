@@ -1,0 +1,122 @@
+"""Code intelligence tools (diagnostics, code_actions, rename)."""
+
+from typing import Any
+
+from fastmcp import Context
+
+from ..constants import DEFAULT_PAGINATION_LIMIT, DEFAULT_PAGINATION_OFFSET, LSPMethods
+from ..exceptions import LSPRequestError
+from ..utils import apply_pagination, diagnostic_sort_key, ensure_file_uri
+
+
+async def diagnostics(
+    file_path: str | None = None,
+    limit: int = DEFAULT_PAGINATION_LIMIT,
+    offset: int = DEFAULT_PAGINATION_OFFSET,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Get errors/warnings. If file_path is None, returns all diagnostics."""
+    from ..server import current_diagnostics
+
+    if ctx:
+        await ctx.info(
+            f"Getting diagnostics for {file_path or 'all files'} "
+            f"(limit: {limit}, offset: {offset})"
+        )
+
+    if file_path:
+        file_uri = ensure_file_uri(file_path)
+        file_diagnostics = {file_uri: current_diagnostics.get(file_uri, [])}
+    else:
+        file_diagnostics = current_diagnostics
+
+    items: list[dict[str, Any]] = []
+    for uri, diags in file_diagnostics.items():
+        for diag in diags:
+            item = diag.copy()
+            item["uri"] = uri
+            items.append(item)
+
+    items.sort(key=diagnostic_sort_key)
+    paginated_items, metadata = apply_pagination(items, offset, limit)
+
+    return {"items": paginated_items, **metadata}
+
+
+async def code_actions(
+    file_path: str,
+    start_line: int,
+    start_char: int,
+    end_line: int,
+    end_char: int,
+    ctx: Context | None = None,
+) -> list[dict[str, Any]]:
+    """Get available fixes/refactorings for a range (0-indexed)."""
+    from ..server import current_diagnostics, ensure_rust_analyzer
+
+    client = ensure_rust_analyzer()
+    file_uri = ensure_file_uri(file_path)
+
+    if ctx:
+        await ctx.info(f"Getting code actions for {file_path}")
+
+    file_diagnostics = current_diagnostics.get(file_uri, [])
+
+    response = await client.request(
+        LSPMethods.CODE_ACTION,
+        {
+            "textDocument": {"uri": file_uri},
+            "range": {
+                "start": {"line": start_line, "character": start_char},
+                "end": {"line": end_line, "character": end_char},
+            },
+            "context": {"diagnostics": file_diagnostics},
+        },
+    )
+
+    return response or []
+
+
+async def rename(
+    file_path: str,
+    line: int,
+    character: int,
+    new_name: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Rename symbol at position across the project."""
+    from ..server import ensure_rust_analyzer
+
+    client = ensure_rust_analyzer()
+    file_uri = ensure_file_uri(file_path)
+
+    if ctx:
+        await ctx.info(
+            f"Renaming symbol at {file_path}:{line}:{character} to '{new_name}'"
+        )
+
+    try:
+        prepare_result = await client.request(
+            LSPMethods.PREPARE_RENAME,
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": character},
+            },
+        )
+
+        if not prepare_result:
+            return {"error": "Cannot rename at this position"}
+
+    except LSPRequestError:
+        return {"error": "Cannot rename at this position"}
+
+    response = await client.request(
+        LSPMethods.RENAME,
+        {
+            "textDocument": {"uri": file_uri},
+            "position": {"line": line, "character": character},
+            "newName": new_name,
+        },
+    )
+
+    return response or {"changes": {}}
