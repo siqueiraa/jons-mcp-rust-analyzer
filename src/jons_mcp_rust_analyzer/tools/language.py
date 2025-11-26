@@ -55,7 +55,7 @@ async def completion(
     include_documentation: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get completions at position. Returns paginated items with offset field."""
+    """Get completions at position. Paginated: use limit/offset, check hasMore for more results."""
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -209,7 +209,7 @@ async def references(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Find all references to symbol. Returns paginated items."""
+    """Find all references to symbol. Paginated: use limit/offset, check hasMore for more results."""
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -243,7 +243,7 @@ async def document_symbols(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get all symbols in file (functions, structs, etc.). Paginated."""
+    """Get all symbols in file (functions, structs, etc.). Paginated: use limit/offset, check hasMore for more results."""
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -293,7 +293,7 @@ async def workspace_symbols(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Search symbols across workspace. Query can be partial name."""
+    """Search symbols across workspace. Query can be partial name. Paginated: use limit/offset, check hasMore for more results."""
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()

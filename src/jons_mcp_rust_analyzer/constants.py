@@ -13,7 +13,7 @@ CONTENT_LENGTH_HEADER: str = "Content-Length: "
 HEADER_SEPARATOR: bytes = b"\r\n\r\n"
 
 # Pagination defaults
-DEFAULT_PAGINATION_LIMIT: int = 50
+DEFAULT_PAGINATION_LIMIT: int = 20
 DEFAULT_PAGINATION_OFFSET: int = 0
 
 # LSP Method names

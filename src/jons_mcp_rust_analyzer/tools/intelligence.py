@@ -15,7 +15,7 @@ async def diagnostics(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get errors/warnings. If file_path is None, returns all diagnostics."""
+    """Get errors/warnings. If file_path is None, returns all diagnostics. Paginated: use limit/offset, check hasMore for more results."""
     from ..server import current_diagnostics
 
     if ctx:
