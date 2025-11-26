@@ -145,7 +145,32 @@ async def ensure_rust_analyzer_indexed() -> RustAnalyzerClient:
 
 
 # Create FastMCP server instance with lifespan
-mcp = FastMCP(name="rust-analyzer-mcp", lifespan=lifespan)
+mcp = FastMCP(
+    name="rust-analyzer-mcp",
+    lifespan=lifespan,
+    instructions="""
+This server provides rust-analyzer LSP features for Rust code intelligence.
+
+Start with these tools for navigation:
+- workspace_symbols: Search for types/functions across the project
+- document_symbols: List symbols in a specific file
+- definition/type_definition: Jump to where something is defined
+
+For understanding code:
+- hover: Get type info and docs at a position
+- references: Find all usages of a symbol
+- implementation: Find trait implementations
+
+For modifications:
+- diagnostics: Check for errors before/after changes
+- code_actions: Get available fixes/refactorings
+- rename: Safely rename symbols across the project
+
+Paginated tools (completion, references, document_symbols, workspace_symbols,
+diagnostics) return max 20 items by default. Use limit/offset and check
+hasMore for additional results.
+""",
+)
 
 
 # Register all tools with the MCP server
