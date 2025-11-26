@@ -57,25 +57,34 @@ uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
 ### Local Installation (recommended for development)
 
 ```bash
-# Register the MCP server with Claude Code using the local installation
-claude mcp add jons-mcp-rust-analyzer -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+# Navigate to your Rust project first
+cd /path/to/your/rust/project
+
+# Register the MCP server with Claude Code, passing the current directory as the project path
+claude mcp add jons-mcp-rust-analyzer -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer "$(pwd)"
 ```
 
 ### Using uvx (direct from GitHub)
 
 ```bash
-# Run directly from GitHub
-claude mcp add jons-mcp-rust-analyzer -- uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+# Navigate to your Rust project first
+cd /path/to/your/rust/project
+
+# Run directly from GitHub with project path
+claude mcp add jons-mcp-rust-analyzer -- uvx --from git+https://github.com/jonmmease/jons-mcp-rust-analyzer jons-mcp-rust-analyzer "$(pwd)"
 ```
 
 ### With environment variables
 
 ```bash
+# Navigate to your Rust project first
+cd /path/to/your/rust/project
+
 # Add with custom rust-analyzer path
 claude mcp add jons-mcp-rust-analyzer \
   -e RUST_ANALYZER_PATH=/custom/path/to/rust-analyzer \
   -e LOG_LEVEL=DEBUG \
-  -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer
+  -- uv run --directory /path/to/jons-mcp-rust-analyzer jons-mcp-rust-analyzer "$(pwd)"
 ```
 
 ### Managing MCP servers
@@ -93,7 +102,7 @@ claude mcp remove jons-mcp-rust-analyzer
 
 ## Configuration
 
-- **Working Directory**: Must be launched from a Rust project root (containing `Cargo.toml`)
+- **Project Path**: Pass as CLI argument (e.g., `jons-mcp-rust-analyzer /path/to/rust/project`) or set via `RUST_PROJECT_PATH` environment variable. Defaults to current working directory.
 - **rust-analyzer Path**: Can be configured via `RUST_ANALYZER_PATH` environment variable
 - **Logging**: Set `LOG_LEVEL` environment variable (default: INFO)
 

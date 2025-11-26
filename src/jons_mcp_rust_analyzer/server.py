@@ -4,6 +4,7 @@ This module provides the main server setup, lifespan management,
 and tool registration for the MCP rust-analyzer server.
 """
 
+import argparse
 import logging
 import os
 import signal
@@ -17,6 +18,10 @@ from fastmcp import FastMCP
 from .constants import LSPMethods
 from .exceptions import RustAnalyzerNotInitializedError
 from .lsp_client import RustAnalyzerClient
+
+# Global project root (can be set via CLI argument or environment variable)
+_project_root: Path | None = None
+
 from .tools import (
     analyzer_status,
     code_actions,
@@ -65,18 +70,17 @@ async def handle_diagnostics(params: dict[str, Any]) -> None:
 
 @asynccontextmanager
 async def lifespan(mcp: FastMCP) -> AsyncIterator[None]:
-    """Manage the lifecycle of the rust-analyzer client.
-
-    Args:
-        mcp: The FastMCP server instance
-
-    Yields:
-        None when server is ready
-    """
+    """Manage the lifecycle of the rust-analyzer client."""
     global rust_analyzer
 
-    # Startup
-    project_root = Path.cwd()
+    # Determine project root: CLI arg > env var > cwd
+    if _project_root is not None:
+        project_root = _project_root
+    elif "RUST_PROJECT_PATH" in os.environ:
+        project_root = Path(os.environ["RUST_PROJECT_PATH"]).resolve()
+    else:
+        project_root = Path.cwd()
+
     logger.info(f"Starting MCP server in project: {project_root}")
 
     # Check if this is a Rust project
@@ -157,6 +161,26 @@ def signal_handler(signum: int, frame: Any) -> None:
 
 def main() -> None:
     """Main entry point for the MCP server."""
+    global _project_root
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="MCP server for rust-analyzer LSP features"
+    )
+    parser.add_argument(
+        "project_path",
+        nargs="?",
+        help="Path to the Rust project (defaults to current directory)",
+    )
+    args = parser.parse_args()
+
+    # Set project root from CLI argument
+    if args.project_path:
+        _project_root = Path(args.project_path).resolve()
+        if not _project_root.exists():
+            print(f"Error: Project path does not exist: {_project_root}", file=sys.stderr)
+            sys.exit(1)
+
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
