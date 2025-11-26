@@ -34,6 +34,7 @@ from .tools import (
     format_range,
     hover,
     implementation,
+    members,
     references,
     related_tests,
     rename,
@@ -158,6 +159,7 @@ Start with these tools for navigation:
 
 For understanding code:
 - hover: Get type info and docs at a position
+- members: Get methods/fields available on an expression
 - references: Find all usages of a symbol
 - implementation: Find trait implementations
 
@@ -176,6 +178,7 @@ hasMore for additional results.
 # Register all tools with the MCP server
 mcp.tool(hover)
 mcp.tool(completion)
+mcp.tool(members)
 mcp.tool(definition)
 mcp.tool(type_definition)
 mcp.tool(implementation)

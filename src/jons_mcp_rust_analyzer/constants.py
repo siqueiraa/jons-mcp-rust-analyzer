@@ -26,6 +26,11 @@ class LSPMethods:
     SHUTDOWN = "shutdown"
     EXIT = "exit"
 
+    # Text Document Sync
+    DID_OPEN = "textDocument/didOpen"
+    DID_CHANGE = "textDocument/didChange"
+    DID_CLOSE = "textDocument/didClose"
+
     # Text Document
     HOVER = "textDocument/hover"
     COMPLETION = "textDocument/completion"

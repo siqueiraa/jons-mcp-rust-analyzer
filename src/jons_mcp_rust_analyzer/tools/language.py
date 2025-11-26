@@ -313,3 +313,148 @@ async def workspace_symbols(
     paginated_items, metadata = apply_pagination(items, offset, limit)
 
     return {"items": paginated_items, **metadata}
+
+
+async def members(
+    file_path: str,
+    line: int,
+    character: int,
+    limit: int = DEFAULT_PAGINATION_LIMIT,
+    offset: int = DEFAULT_PAGINATION_OFFSET,
+    include_detail: bool = True,
+    include_documentation: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Get methods/fields available on the type at position.
+
+    Returns the members (methods, fields) that can be accessed on the expression
+    at the given position. Paginated: use limit/offset, check hasMore.
+    """
+    from pathlib import Path
+
+    from ..server import ensure_rust_analyzer_indexed
+
+    client = await ensure_rust_analyzer_indexed()
+    file_uri = ensure_file_uri(file_path)
+
+    if ctx:
+        await ctx.info(
+            f"Getting dot completions at {file_path}:{line}:{character} "
+            f"(limit: {limit}, offset: {offset})"
+        )
+
+    # Read the actual file content
+    resolved_path = Path(file_path)
+    if not resolved_path.is_absolute():
+        resolved_path = Path.cwd() / file_path
+
+    original_content = resolved_path.read_text()
+    lines = original_content.splitlines(keepends=True)
+
+    # Handle case where file doesn't end with newline
+    if original_content and not original_content.endswith('\n'):
+        if lines:
+            lines[-1] = lines[-1] + '\n'
+
+    # Insert '.' at the specified position
+    if line < len(lines):
+        current_line = lines[line]
+        # Remove the newline temporarily for insertion
+        line_content = current_line.rstrip('\n')
+        newline = current_line[len(line_content):]
+
+        # Insert the dot
+        char_pos = min(character, len(line_content))
+        modified_line = line_content[:char_pos] + '.' + line_content[char_pos:] + newline
+        lines[line] = modified_line
+    else:
+        # Line doesn't exist, append lines as needed
+        while len(lines) <= line:
+            lines.append('\n')
+        lines[line] = '.\n'
+
+    modified_content = ''.join(lines)
+
+    # Open the document with modified content using a virtual URI
+    # We use a slightly different URI to avoid conflicts with any open document
+    virtual_uri = file_uri + ".virtual"
+
+    try:
+        # Open the virtual document
+        await client.notify(
+            LSPMethods.DID_OPEN,
+            {
+                "textDocument": {
+                    "uri": virtual_uri,
+                    "languageId": "rust",
+                    "version": 1,
+                    "text": modified_content,
+                }
+            },
+        )
+
+        # Request completions at the position right after the inserted '.'
+        response = await client.request(
+            LSPMethods.COMPLETION,
+            {
+                "textDocument": {"uri": virtual_uri},
+                "position": {"line": line, "character": character + 1},
+                "context": {
+                    "triggerKind": 2,  # TriggerCharacter
+                    "triggerCharacter": ".",
+                },
+            },
+        )
+    finally:
+        # Always close the virtual document
+        await client.notify(
+            LSPMethods.DID_CLOSE,
+            {"textDocument": {"uri": virtual_uri}},
+        )
+
+    # Process results (same as completion)
+    items: list[dict[str, Any]] = []
+    is_incomplete = False
+
+    if isinstance(response, list):
+        items = response
+    elif isinstance(response, dict):
+        items = response.get("items", [])
+        is_incomplete = response.get("isIncomplete", False)
+
+    items.sort(key=completion_sort_key)
+
+    total_items = len(items)
+    start_idx = min(offset, total_items)
+    end_idx = min(start_idx + limit, total_items)
+    paginated_items = items[start_idx:end_idx]
+
+    has_more = end_idx < total_items
+
+    processed_items = []
+    for i, item in enumerate(paginated_items):
+        processed_item: dict[str, Any] = {
+            "label": item.get("label", ""),
+            "kind": item.get("kind"),
+            "offset": start_idx + i,
+        }
+
+        if include_detail and "detail" in item:
+            processed_item["detail"] = item["detail"]
+
+        if include_documentation and "documentation" in item:
+            processed_item["documentation"] = item["documentation"]
+
+        processed_items.append(processed_item)
+
+    return {
+        "items": processed_items,
+        "isIncomplete": is_incomplete,
+        "totalItems": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+        "nextOffset": end_idx if has_more else None,
+        "includeDetail": include_detail,
+        "includeDocumentation": include_documentation,
+    }

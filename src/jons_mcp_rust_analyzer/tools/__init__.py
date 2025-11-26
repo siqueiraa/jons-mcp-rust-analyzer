@@ -14,6 +14,7 @@ from .language import (
     document_symbols,
     hover,
     implementation,
+    members,
     references,
     type_definition,
     workspace_symbols,
@@ -23,6 +24,7 @@ __all__ = [
     # Language features
     "hover",
     "completion",
+    "members",
     "definition",
     "type_definition",
     "implementation",
