@@ -328,7 +328,8 @@ async def members(
     """Get methods/fields available on the type at position.
 
     Returns the members (methods, fields) that can be accessed on the expression
-    at the given position. Paginated: use limit/offset, check hasMore.
+    at the given position. The position can be anywhere on an identifier - the tool
+    will find the end of it. Paginated: use limit/offset, check hasMore.
     """
     from pathlib import Path
 
@@ -339,7 +340,7 @@ async def members(
 
     if ctx:
         await ctx.info(
-            f"Getting dot completions at {file_path}:{line}:{character} "
+            f"Getting members at {file_path}:{line}:{character} "
             f"(limit: {limit}, offset: {offset})"
         )
 
@@ -349,43 +350,54 @@ async def members(
         resolved_path = Path.cwd() / file_path
 
     original_content = resolved_path.read_text()
-    lines = original_content.splitlines(keepends=True)
+    file_lines = original_content.splitlines(keepends=True)
 
     # Handle case where file doesn't end with newline
     if original_content and not original_content.endswith('\n'):
-        if lines:
-            lines[-1] = lines[-1] + '\n'
+        if file_lines:
+            file_lines[-1] = file_lines[-1] + '\n'
 
-    # Insert '.' at the specified position
-    if line < len(lines):
-        current_line = lines[line]
-        # Remove the newline temporarily for insertion
+    # Find the end of the identifier at the given position and insert '.' there
+    completion_char = character + 1  # Default: right after given position
+    if line < len(file_lines):
+        current_line = file_lines[line]
         line_content = current_line.rstrip('\n')
-        newline = current_line[len(line_content):]
 
-        # Insert the dot
+        # Start at the given character position
         char_pos = min(character, len(line_content))
-        modified_line = line_content[:char_pos] + '.' + line_content[char_pos:] + newline
-        lines[line] = modified_line
+
+        # Scan right to find the end of the identifier
+        end_pos = char_pos
+        while end_pos < len(line_content) and (
+            line_content[end_pos].isalnum() or line_content[end_pos] == '_'
+        ):
+            end_pos += 1
+
+        # Insert dot at end of identifier, truncate rest of line to avoid syntax issues
+        # This ensures we get clean completion without interference from existing code
+        modified_line = line_content[:end_pos] + '.\n'
+        file_lines[line] = modified_line
+
+        # Completion position is right after the dot
+        completion_char = end_pos + 1
     else:
         # Line doesn't exist, append lines as needed
-        while len(lines) <= line:
-            lines.append('\n')
-        lines[line] = '.\n'
+        while len(file_lines) <= line:
+            file_lines.append('\n')
+        file_lines[line] = '.\n'
 
-    modified_content = ''.join(lines)
+    modified_content = ''.join(file_lines)
 
-    # Open the document with modified content using a virtual URI
-    # We use a slightly different URI to avoid conflicts with any open document
-    virtual_uri = file_uri + ".virtual"
-
+    # Use the REAL file URI, not a virtual one
+    # didOpen with real URI makes rust-analyzer use our modified content
+    # while keeping full project context (imports, dependencies, type resolution)
     try:
-        # Open the virtual document
+        # Open the document with modified content
         await client.notify(
             LSPMethods.DID_OPEN,
             {
                 "textDocument": {
-                    "uri": virtual_uri,
+                    "uri": file_uri,
                     "languageId": "rust",
                     "version": 1,
                     "text": modified_content,
@@ -393,12 +405,12 @@ async def members(
             },
         )
 
-        # Request completions at the position right after the inserted '.'
+        # Request completions at the position right after the '.'
         response = await client.request(
             LSPMethods.COMPLETION,
             {
-                "textDocument": {"uri": virtual_uri},
-                "position": {"line": line, "character": character + 1},
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": completion_char},
                 "context": {
                     "triggerKind": 2,  # TriggerCharacter
                     "triggerCharacter": ".",
@@ -406,10 +418,10 @@ async def members(
             },
         )
     finally:
-        # Always close the virtual document
+        # Close the document - rust-analyzer reverts to disk content
         await client.notify(
             LSPMethods.DID_CLOSE,
-            {"textDocument": {"uri": virtual_uri}},
+            {"textDocument": {"uri": file_uri}},
         )
 
     # Process results (same as completion)
