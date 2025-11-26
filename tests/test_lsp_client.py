@@ -352,7 +352,7 @@ class TestRustAnalyzerClient:
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
         client._handle_progress({
-            "token": "rustAnalyzer/Indexing",
+            "token": "rustAnalyzer/indexing",
             "value": {"kind": "begin", "title": "Indexing", "message": "0/100"}
         })
 
@@ -369,13 +369,13 @@ class TestRustAnalyzerClient:
 
         # Start indexing
         client._handle_progress({
-            "token": "rustAnalyzer/Indexing",
+            "token": "rustAnalyzer/indexing",
             "value": {"kind": "begin"}
         })
 
         # Report progress
         client._handle_progress({
-            "token": "rustAnalyzer/Indexing",
+            "token": "rustAnalyzer/indexing",
             "value": {"kind": "report", "percentage": 50, "message": "50/100 (std)"}
         })
 
@@ -390,11 +390,11 @@ class TestRustAnalyzerClient:
 
         # Start and end indexing
         client._handle_progress({
-            "token": "rustAnalyzer/Indexing",
+            "token": "rustAnalyzer/indexing",
             "value": {"kind": "begin"}
         })
         client._handle_progress({
-            "token": "rustAnalyzer/Indexing",
+            "token": "rustAnalyzer/indexing",
             "value": {"kind": "end"}
         })
 

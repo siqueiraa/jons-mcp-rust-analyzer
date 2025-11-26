@@ -56,4 +56,4 @@ class LSPMethods:
 
 
 # rust-analyzer progress tokens
-INDEXING_TOKEN = "rustAnalyzer/Indexing"
+INDEXING_TOKEN = "rustAnalyzer/indexing"
