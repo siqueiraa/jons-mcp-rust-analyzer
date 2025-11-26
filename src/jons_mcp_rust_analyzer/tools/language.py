@@ -331,9 +331,13 @@ async def members(
     at the given position. The position can be anywhere on an identifier - the tool
     will find the end of it. Paginated: use limit/offset, check hasMore.
     """
+    import asyncio
+    import logging
     from pathlib import Path
 
     from ..server import ensure_rust_analyzer_indexed
+
+    logger = logging.getLogger(__name__)
 
     client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
@@ -359,9 +363,13 @@ async def members(
 
     # Find the end of the identifier at the given position and insert '.' there
     completion_char = character + 1  # Default: right after given position
+    original_line = ""
+    modified_line = ""
+
     if line < len(file_lines):
         current_line = file_lines[line]
-        line_content = current_line.rstrip('\n')
+        original_line = current_line.rstrip('\n')
+        line_content = original_line
 
         # Start at the given character position
         char_pos = min(character, len(line_content))
@@ -373,10 +381,10 @@ async def members(
         ):
             end_pos += 1
 
-        # Insert dot at end of identifier, truncate rest of line to avoid syntax issues
-        # This ensures we get clean completion without interference from existing code
-        modified_line = line_content[:end_pos] + '.\n'
-        file_lines[line] = modified_line
+        # Insert dot at end of identifier, keep rest of line
+        # (rust-analyzer should handle incomplete expressions)
+        modified_line = line_content[:end_pos] + '.' + line_content[end_pos:]
+        file_lines[line] = modified_line + '\n'
 
         # Completion position is right after the dot
         completion_char = end_pos + 1
@@ -385,14 +393,22 @@ async def members(
         while len(file_lines) <= line:
             file_lines.append('\n')
         file_lines[line] = '.\n'
+        modified_line = '.'
 
     modified_content = ''.join(file_lines)
+
+    # Debug logging
+    logger.info(f"members: file_uri={file_uri}")
+    logger.info(f"members: line={line}, char={character}, completion_char={completion_char}")
+    logger.info(f"members: original_line={original_line!r}")
+    logger.info(f"members: modified_line={modified_line!r}")
 
     # Use the REAL file URI, not a virtual one
     # didOpen with real URI makes rust-analyzer use our modified content
     # while keeping full project context (imports, dependencies, type resolution)
     try:
         # Open the document with modified content
+        logger.info("members: sending didOpen")
         await client.notify(
             LSPMethods.DID_OPEN,
             {
@@ -405,20 +421,24 @@ async def members(
             },
         )
 
+        # Give rust-analyzer time to process the document
+        await asyncio.sleep(0.1)
+
         # Request completions at the position right after the '.'
+        # Use triggerKind=1 (Invoked) - simpler and more reliable
+        logger.info(f"members: requesting completion at line={line}, char={completion_char}")
         response = await client.request(
             LSPMethods.COMPLETION,
             {
                 "textDocument": {"uri": file_uri},
                 "position": {"line": line, "character": completion_char},
-                "context": {
-                    "triggerKind": 2,  # TriggerCharacter
-                    "triggerCharacter": ".",
-                },
             },
         )
+        logger.info(f"members: got response type={type(response)}, "
+                    f"items={len(response.get('items', [])) if isinstance(response, dict) else len(response) if isinstance(response, list) else 'N/A'}")
     finally:
         # Close the document - rust-analyzer reverts to disk content
+        logger.info("members: sending didClose")
         await client.notify(
             LSPMethods.DID_CLOSE,
             {"textDocument": {"uri": file_uri}},
