@@ -381,52 +381,42 @@ async def members(
         ):
             end_pos += 1
 
-        # Insert dot at end of identifier, keep rest of line
-        # (rust-analyzer should handle incomplete expressions)
-        modified_line = line_content[:end_pos] + '.' + line_content[end_pos:]
-        file_lines[line] = modified_line + '\n'
+        # Check if there's already a '.' right after the identifier
+        already_has_dot = end_pos < len(line_content) and line_content[end_pos] == '.'
 
-        # Completion position is right after the dot
-        completion_char = end_pos + 1
+        if already_has_dot:
+            # Already has a dot - use original file, request completion after the dot
+            completion_char = end_pos + 1
+            modified_line = line_content
+            modified_content = original_content  # Use original file as-is
+            logger.info(f"members: found existing dot at position {end_pos}, using original file")
+        else:
+            # Insert dot at end of identifier, truncate rest of line to keep it clean
+            modified_line = line_content[:end_pos] + '.'
+            file_lines[line] = modified_line + '\n'
+            completion_char = end_pos + 1
+            modified_content = ''.join(file_lines)
+            already_has_dot = False
     else:
         # Line doesn't exist, append lines as needed
         while len(file_lines) <= line:
             file_lines.append('\n')
         file_lines[line] = '.\n'
         modified_line = '.'
-
-    modified_content = ''.join(file_lines)
+        modified_content = ''.join(file_lines)
+        already_has_dot = False
 
     # Debug logging
     logger.info(f"members: file_uri={file_uri}")
     logger.info(f"members: line={line}, char={character}, completion_char={completion_char}")
     logger.info(f"members: original_line={original_line!r}")
     logger.info(f"members: modified_line={modified_line!r}")
+    logger.info(f"members: already_has_dot={already_has_dot}")
 
-    # Use the REAL file URI, not a virtual one
-    # didOpen with real URI makes rust-analyzer use our modified content
-    # while keeping full project context (imports, dependencies, type resolution)
-    try:
-        # Open the document with modified content
-        logger.info("members: sending didOpen")
-        await client.notify(
-            LSPMethods.DID_OPEN,
-            {
-                "textDocument": {
-                    "uri": file_uri,
-                    "languageId": "rust",
-                    "version": 1,
-                    "text": modified_content,
-                }
-            },
-        )
-
-        # Give rust-analyzer time to process the document
-        await asyncio.sleep(0.1)
-
-        # Request completions at the position right after the '.'
-        # Use triggerKind=1 (Invoked) - simpler and more reliable
-        logger.info(f"members: requesting completion at line={line}, char={completion_char}")
+    if already_has_dot:
+        # File already has the dot - just request completion directly
+        # rust-analyzer already has this file indexed
+        logger.info("members: requesting completion directly (no didOpen needed)")
         response = await client.request(
             LSPMethods.COMPLETION,
             {
@@ -436,13 +426,44 @@ async def members(
         )
         logger.info(f"members: got response type={type(response)}, "
                     f"items={len(response.get('items', [])) if isinstance(response, dict) else len(response) if isinstance(response, list) else 'N/A'}")
-    finally:
-        # Close the document - rust-analyzer reverts to disk content
-        logger.info("members: sending didClose")
-        await client.notify(
-            LSPMethods.DID_CLOSE,
-            {"textDocument": {"uri": file_uri}},
-        )
+    else:
+        # Need to open with modified content
+        # Use the REAL file URI - didOpen makes rust-analyzer use our modified content
+        # while keeping full project context (imports, dependencies, type resolution)
+        try:
+            logger.info("members: sending didOpen with modified content")
+            await client.notify(
+                LSPMethods.DID_OPEN,
+                {
+                    "textDocument": {
+                        "uri": file_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": modified_content,
+                    }
+                },
+            )
+
+            # Give rust-analyzer time to process the document
+            await asyncio.sleep(0.1)
+
+            logger.info(f"members: requesting completion at line={line}, char={completion_char}")
+            response = await client.request(
+                LSPMethods.COMPLETION,
+                {
+                    "textDocument": {"uri": file_uri},
+                    "position": {"line": line, "character": completion_char},
+                },
+            )
+            logger.info(f"members: got response type={type(response)}, "
+                        f"items={len(response.get('items', [])) if isinstance(response, dict) else len(response) if isinstance(response, list) else 'N/A'}")
+        finally:
+            # Close the document - rust-analyzer reverts to disk content
+            logger.info("members: sending didClose")
+            await client.notify(
+                LSPMethods.DID_CLOSE,
+                {"textDocument": {"uri": file_uri}},
+            )
 
     # Process results (same as completion)
     items: list[dict[str, Any]] = []
