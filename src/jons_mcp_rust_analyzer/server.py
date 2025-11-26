@@ -124,21 +124,21 @@ def ensure_rust_analyzer() -> RustAnalyzerClient:
 
 
 async def ensure_rust_analyzer_indexed() -> RustAnalyzerClient:
-    """Ensure rust-analyzer is initialized and indexing is complete.
+    """Ensure rust-analyzer is initialized and ready (progress complete).
 
     Returns:
         The initialized rust-analyzer client
 
     Raises:
-        RustAnalyzerNotInitializedError: If client is not initialized or indexing times out
+        RustAnalyzerNotInitializedError: If client is not initialized or wait times out
     """
     client = ensure_rust_analyzer()
 
-    if not client.is_indexing_complete():
-        logger.info("Waiting for rust-analyzer indexing to complete...")
-        if not await client.wait_for_indexing():
+    if not client.is_ready():
+        logger.info("Waiting for rust-analyzer to be ready...")
+        if not await client.wait_until_ready():
             raise RustAnalyzerNotInitializedError(
-                "rust-analyzer indexing timed out. Try again later."
+                "rust-analyzer not ready (timed out). Try again later."
             )
 
     return client

@@ -12,7 +12,7 @@ from .constants import (
     CONTENT_LENGTH_HEADER,
     HEADER_SEPARATOR,
     INDEXING_TIMEOUT,
-    INDEXING_TOKEN,
+    PROGRESS_TOKENS,
     READ_BUFFER_SIZE,
     REQUEST_TIMEOUT,
     SHUTDOWN_TIMEOUT,
@@ -54,11 +54,11 @@ class RustAnalyzerClient:
         self._stderr_task: asyncio.Task[None] | None = None
         self._initialized = False
         self._shutting_down = False
-        # Indexing state tracking
-        self._indexing_in_progress = False
-        self._indexing_complete = asyncio.Event()
-        self._indexing_percentage: int | None = None
-        self._indexing_message: str | None = None
+        # Progress state tracking - track active progress tasks
+        self._active_progress: set[str] = set()  # Currently active progress tokens
+        self._any_progress_started = False  # True once any progress begins
+        self._ready = asyncio.Event()  # Set when all progress completes
+        self._progress_message: str | None = None
 
     def _find_rust_analyzer(self) -> str:
         """Find rust-analyzer executable.
@@ -426,6 +426,9 @@ class RustAnalyzerClient:
             method = message.get("method", "")
             params = message.get("params", {})
 
+            # Log all notifications for debugging
+            logger.info(f"Notification received: method={method}")
+
             # Handle progress notifications internally
             if method == LSPMethods.PROGRESS:
                 self._handle_progress(params)
@@ -479,44 +482,54 @@ class RustAnalyzerClient:
         """
         return self._initialized and not self._shutting_down
 
-    def is_indexing(self) -> bool:
-        """Check if rust-analyzer is currently indexing."""
-        return self._indexing_in_progress
+    def is_busy(self) -> bool:
+        """Check if rust-analyzer has active progress tasks."""
+        return len(self._active_progress) > 0
 
-    def is_indexing_complete(self) -> bool:
-        """Check if indexing has completed at least once."""
-        return self._indexing_complete.is_set()
+    def is_ready(self) -> bool:
+        """Check if rust-analyzer is ready (progress completed or never started)."""
+        return self._ready.is_set()
 
-    def get_indexing_status(self) -> dict[str, Any]:
-        """Get current indexing status.
+    def get_progress_status(self) -> dict[str, Any]:
+        """Get current progress status.
 
         Returns:
-            Dictionary with indexing state information
+            Dictionary with progress state information
         """
         return {
-            "indexing": self._indexing_in_progress,
-            "complete": self._indexing_complete.is_set(),
-            "percentage": self._indexing_percentage,
-            "message": self._indexing_message,
+            "busy": self.is_busy(),
+            "ready": self.is_ready(),
+            "activeTasks": list(self._active_progress),
+            "message": self._progress_message,
         }
 
-    async def wait_for_indexing(self, timeout: float = INDEXING_TIMEOUT) -> bool:
-        """Wait for indexing to complete.
+    async def wait_until_ready(self, timeout: float = INDEXING_TIMEOUT) -> bool:
+        """Wait for rust-analyzer to be ready (all progress tasks complete).
 
         Args:
             timeout: Maximum time to wait in seconds
 
         Returns:
-            True if indexing completed, False if timed out
+            True if ready, False if timed out
         """
-        if self._indexing_complete.is_set():
+        # If no progress has started yet, wait a bit for it to begin
+        if not self._any_progress_started:
+            # Give rust-analyzer a moment to start sending progress
+            await asyncio.sleep(0.5)
+            # If still no progress, assume ready (small project or cached)
+            if not self._any_progress_started:
+                logger.info("No progress notifications received, assuming ready")
+                self._ready.set()
+                return True
+
+        if self._ready.is_set():
             return True
 
         try:
-            await asyncio.wait_for(self._indexing_complete.wait(), timeout=timeout)
+            await asyncio.wait_for(self._ready.wait(), timeout=timeout)
             return True
         except asyncio.TimeoutError:
-            logger.warning(f"Indexing wait timed out after {timeout}s")
+            logger.warning(f"Wait for ready timed out after {timeout}s")
             return False
 
     def _handle_progress(self, params: dict[str, Any]) -> None:
@@ -525,28 +538,30 @@ class RustAnalyzerClient:
         value = params.get("value", {})
         kind = value.get("kind")
 
-        # Only track indexing progress
-        if token != INDEXING_TOKEN:
+        # Log ALL progress notifications for debugging
+        logger.info(f"Progress notification: token={token!r}, kind={kind}")
+
+        # Only track known progress tokens
+        if token not in PROGRESS_TOKENS:
             return
 
         if kind == "begin":
-            self._indexing_in_progress = True
-            self._indexing_complete.clear()
-            self._indexing_percentage = 0
-            self._indexing_message = value.get("message")
-            logger.info("rust-analyzer indexing started")
+            self._any_progress_started = True
+            self._active_progress.add(token)
+            self._ready.clear()
+            self._progress_message = value.get("message")
+            logger.info(f"Progress started: {token}")
         elif kind == "report":
-            self._indexing_percentage = value.get("percentage")
-            self._indexing_message = value.get("message")
-            logger.debug(
-                f"Indexing progress: {self._indexing_percentage}% - {self._indexing_message}"
-            )
+            self._progress_message = value.get("message")
+            logger.debug(f"Progress update: {token} - {self._progress_message}")
         elif kind == "end":
-            self._indexing_in_progress = False
-            self._indexing_percentage = 100
-            self._indexing_message = None
-            self._indexing_complete.set()
-            logger.info("rust-analyzer indexing complete")
+            self._active_progress.discard(token)
+            logger.info(f"Progress ended: {token}")
+            # If no more active progress, mark as ready
+            if not self._active_progress:
+                self._progress_message = None
+                self._ready.set()
+                logger.info("rust-analyzer is ready (all progress complete)")
 
     async def shutdown(self) -> None:
         """Properly shutdown rust-analyzer."""

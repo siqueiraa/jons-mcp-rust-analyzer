@@ -334,17 +334,17 @@ class TestRustAnalyzerClient:
         client._shutting_down = True
         assert not client.is_initialized()
 
-    def test_indexing_status_initial(self, tmp_path: Path) -> None:
-        """Test initial indexing status."""
+    def test_progress_status_initial(self, tmp_path: Path) -> None:
+        """Test initial progress status."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
-        assert not client.is_indexing()
-        assert not client.is_indexing_complete()
+        assert not client.is_busy()
+        assert not client.is_ready()
 
-        status = client.get_indexing_status()
-        assert status["indexing"] is False
-        assert status["complete"] is False
-        assert status["percentage"] is None
+        status = client.get_progress_status()
+        assert status["busy"] is False
+        assert status["ready"] is False
+        assert status["activeTasks"] == []
         assert status["message"] is None
 
     def test_handle_progress_begin(self, tmp_path: Path) -> None:
@@ -352,22 +352,21 @@ class TestRustAnalyzerClient:
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
         client._handle_progress({
-            "token": "rustAnalyzer/indexing",
-            "value": {"kind": "begin", "title": "Indexing", "message": "0/100"}
+            "token": "rustAnalyzer/Fetching",
+            "value": {"kind": "begin", "title": "Fetching", "message": "Loading..."}
         })
 
-        assert client.is_indexing()
-        assert not client.is_indexing_complete()
-        status = client.get_indexing_status()
-        assert status["indexing"] is True
-        assert status["percentage"] == 0
-        assert status["message"] == "0/100"
+        assert client.is_busy()
+        assert not client.is_ready()
+        status = client.get_progress_status()
+        assert "rustAnalyzer/Fetching" in status["activeTasks"]
+        assert status["message"] == "Loading..."
 
     def test_handle_progress_report(self, tmp_path: Path) -> None:
         """Test handling progress report notification."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
-        # Start indexing
+        # Start progress
         client._handle_progress({
             "token": "rustAnalyzer/indexing",
             "value": {"kind": "begin"}
@@ -379,16 +378,15 @@ class TestRustAnalyzerClient:
             "value": {"kind": "report", "percentage": 50, "message": "50/100 (std)"}
         })
 
-        assert client.is_indexing()
-        status = client.get_indexing_status()
-        assert status["percentage"] == 50
+        assert client.is_busy()
+        status = client.get_progress_status()
         assert status["message"] == "50/100 (std)"
 
     def test_handle_progress_end(self, tmp_path: Path) -> None:
         """Test handling progress end notification."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
-        # Start and end indexing
+        # Start and end progress
         client._handle_progress({
             "token": "rustAnalyzer/indexing",
             "value": {"kind": "begin"}
@@ -398,15 +396,50 @@ class TestRustAnalyzerClient:
             "value": {"kind": "end"}
         })
 
-        assert not client.is_indexing()
-        assert client.is_indexing_complete()
-        status = client.get_indexing_status()
-        assert status["indexing"] is False
-        assert status["complete"] is True
-        assert status["percentage"] == 100
+        assert not client.is_busy()
+        assert client.is_ready()
+        status = client.get_progress_status()
+        assert status["busy"] is False
+        assert status["ready"] is True
+
+    def test_handle_progress_multiple_tasks(self, tmp_path: Path) -> None:
+        """Test handling multiple concurrent progress tasks."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+
+        # Start two tasks
+        client._handle_progress({
+            "token": "rustAnalyzer/Fetching",
+            "value": {"kind": "begin"}
+        })
+        client._handle_progress({
+            "token": "rustAnalyzer/indexing",
+            "value": {"kind": "begin"}
+        })
+
+        assert client.is_busy()
+        assert not client.is_ready()
+        assert len(client._active_progress) == 2
+
+        # End first task
+        client._handle_progress({
+            "token": "rustAnalyzer/Fetching",
+            "value": {"kind": "end"}
+        })
+
+        assert client.is_busy()  # Still busy with indexing
+        assert not client.is_ready()
+
+        # End second task
+        client._handle_progress({
+            "token": "rustAnalyzer/indexing",
+            "value": {"kind": "end"}
+        })
+
+        assert not client.is_busy()
+        assert client.is_ready()
 
     def test_handle_progress_ignores_other_tokens(self, tmp_path: Path) -> None:
-        """Test that progress handler ignores non-indexing tokens."""
+        """Test that progress handler ignores unknown tokens."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
         client._handle_progress({
@@ -414,22 +447,33 @@ class TestRustAnalyzerClient:
             "value": {"kind": "begin"}
         })
 
-        assert not client.is_indexing()
-        assert not client.is_indexing_complete()
+        assert not client.is_busy()
+        assert not client.is_ready()
 
     @pytest.mark.asyncio
-    async def test_wait_for_indexing_already_complete(self, tmp_path: Path) -> None:
-        """Test wait_for_indexing when already complete."""
+    async def test_wait_until_ready_already_ready(self, tmp_path: Path) -> None:
+        """Test wait_until_ready when already ready."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
-        client._indexing_complete.set()
+        client._ready.set()
 
-        result = await client.wait_for_indexing(timeout=0.1)
+        result = await client.wait_until_ready(timeout=0.1)
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_wait_for_indexing_timeout(self, tmp_path: Path) -> None:
-        """Test wait_for_indexing timeout."""
+    async def test_wait_until_ready_no_progress(self, tmp_path: Path) -> None:
+        """Test wait_until_ready when no progress notifications received."""
         client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
 
-        result = await client.wait_for_indexing(timeout=0.01)
+        # Should return True after short wait (assumes ready if no progress)
+        result = await client.wait_until_ready(timeout=1.0)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_until_ready_timeout(self, tmp_path: Path) -> None:
+        """Test wait_until_ready timeout when progress started but not ended."""
+        client = RustAnalyzerClient(tmp_path, rust_analyzer_path="echo")
+        client._any_progress_started = True
+        client._active_progress.add("rustAnalyzer/indexing")
+
+        result = await client.wait_until_ready(timeout=0.01)
         assert result is False

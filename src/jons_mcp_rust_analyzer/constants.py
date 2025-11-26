@@ -55,5 +55,10 @@ class LSPMethods:
     PROGRESS = "$/progress"
 
 
-# rust-analyzer progress tokens
-INDEXING_TOKEN = "rustAnalyzer/indexing"
+# rust-analyzer progress tokens (all phases we need to wait for)
+PROGRESS_TOKENS = {
+    "rustAnalyzer/Fetching",
+    "rustAnalyzer/indexing",
+    "rustAnalyzer/Building CrateGraph",
+    "rustAnalyzer/Roots Scanned",
+}

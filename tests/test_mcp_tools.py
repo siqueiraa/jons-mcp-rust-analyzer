@@ -485,10 +485,10 @@ class TestRustAnalyzerExtensions:
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.request = AsyncMock(return_value="Analyzer: ready\nMemory: 100MB")
-        mock_client.get_indexing_status.return_value = {
-            "indexing": False,
-            "complete": True,
-            "percentage": 100,
+        mock_client.get_progress_status.return_value = {
+            "busy": False,
+            "ready": True,
+            "activeTasks": [],
             "message": None,
         }
 
@@ -497,7 +497,7 @@ class TestRustAnalyzerExtensions:
             result = await tools.analyzer_status(ctx)
 
         assert "Analyzer: ready" in result["internalStatus"]
-        assert result["indexing"]["complete"] is True
+        assert result["progress"]["ready"] is True
 
     async def test_related_tests_tool(self) -> None:
         """Test related tests tool."""

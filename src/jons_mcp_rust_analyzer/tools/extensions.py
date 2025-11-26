@@ -35,7 +35,7 @@ async def expand_macro(
 
 
 async def analyzer_status(ctx: Context | None = None) -> dict[str, Any]:
-    """Get rust-analyzer server status including indexing progress."""
+    """Get rust-analyzer server status including progress info."""
     from ..server import ensure_rust_analyzer
 
     client = ensure_rust_analyzer()
@@ -47,11 +47,11 @@ async def analyzer_status(ctx: Context | None = None) -> dict[str, Any]:
     response = await client.request(LSPMethods.ANALYZER_STATUS, {})
     internal_status = response if isinstance(response, str) else "Status unavailable"
 
-    # Get indexing status from our tracking
-    indexing_status = client.get_indexing_status()
+    # Get progress status from our tracking
+    progress_status = client.get_progress_status()
 
     return {
-        "indexing": indexing_status,
+        "progress": progress_status,
         "internalStatus": internal_status,
     }
 
