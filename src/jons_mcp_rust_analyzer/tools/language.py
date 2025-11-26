@@ -479,6 +479,12 @@ async def members(
     # Sort with fields first, then methods
     items.sort(key=members_sort_key)
 
+    # Log a sample item to see what fields are available
+    if items:
+        sample = items[0]
+        logger.info(f"members: sample item keys={list(sample.keys())}")
+        logger.info(f"members: sample item={sample}")
+
     total_items = len(items)
     start_idx = min(offset, total_items)
     end_idx = min(start_idx + limit, total_items)
