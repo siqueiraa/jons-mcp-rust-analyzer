@@ -90,6 +90,22 @@ def completion_sort_key(item: dict[str, Any]) -> tuple[str, str]:
     return (sort_text, label)
 
 
+def members_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    """Sort key for members (fields first, then methods, then others).
+
+    LSP CompletionItemKind values:
+    - 5 = Field
+    - 2 = Method
+    - 3 = Function
+    """
+    kind = item.get("kind", 999)
+    # Priority: Fields (5) first, then Methods (2), then Functions (3), then others
+    kind_priority = {5: 0, 2: 1, 3: 2}.get(kind, 3)
+    sort_text = item.get("sortText", item.get("label", ""))
+    label = item.get("label", "")
+    return (kind_priority, sort_text, label)
+
+
 def location_sort_key(item: dict[str, Any]) -> tuple[str, int, int]:
     """Sort key for items with location info (references, etc.).
 

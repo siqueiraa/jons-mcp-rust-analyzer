@@ -11,6 +11,7 @@ from ..utils import (
     ensure_file_uri,
     flatten_document_symbols,
     location_sort_key,
+    members_sort_key,
     symbol_sort_key,
     workspace_symbol_sort_key,
 )
@@ -465,7 +466,7 @@ async def members(
                 {"textDocument": {"uri": file_uri}},
             )
 
-    # Process results (same as completion)
+    # Process results
     items: list[dict[str, Any]] = []
     is_incomplete = False
 
@@ -475,7 +476,8 @@ async def members(
         items = response.get("items", [])
         is_incomplete = response.get("isIncomplete", False)
 
-    items.sort(key=completion_sort_key)
+    # Sort with fields first, then methods
+    items.sort(key=members_sort_key)
 
     total_items = len(items)
     start_idx = min(offset, total_items)
