@@ -86,104 +86,6 @@ class TestLanguageFeatureTools:
         assert call_args[0][1]["textDocument"]["uri"].endswith("/src/main.rs")
         assert call_args[0][1]["position"] == {"line": 10, "character": 5}
 
-    async def test_completion_tool(self) -> None:
-        """Test completion tool."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        mock_client.request = AsyncMock(
-            return_value=[
-                {"label": "println!", "kind": 15, "documentation": "Large docs"},
-                {"label": "print!", "kind": 15, "detail": "macro_rules! print"},
-            ]
-        )
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            result = await tools.completion(
-                "src/main.rs",
-                5,
-                10,
-                limit=50,
-                offset=0,
-                include_detail=False,
-                include_documentation=False,
-                ctx=ctx,
-            )
-
-        assert isinstance(result, dict)
-        assert len(result["items"]) == 2
-        assert result["items"][0]["label"] == "print!"  # Sorted alphabetically
-        assert result["items"][1]["label"] == "println!"
-        assert result["items"][0]["kind"] == 15
-        assert result["items"][0]["offset"] == 0
-        assert result["items"][1]["offset"] == 1
-        assert "documentation" not in result["items"][0]  # Should not be included
-        assert "detail" not in result["items"][1]  # Should not be included
-        assert result["totalItems"] == 2
-        assert not result["hasMore"]
-        assert result["offset"] == 0
-
-    async def test_completion_tool_with_completion_list(self) -> None:
-        """Test completion tool with CompletionList response."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        # Simulate a large completion list that would be limited
-        items = [
-            {"label": f"test_{i}", "kind": 6, "documentation": f"Docs for test_{i}"}
-            for i in range(100)
-        ]
-        mock_client.request = AsyncMock(
-            return_value={"isIncomplete": True, "items": items}
-        )
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            # Test first page with detail but no documentation
-            result = await tools.completion(
-                "src/main.rs",
-                5,
-                10,
-                limit=20,
-                offset=0,
-                include_detail=True,
-                include_documentation=False,
-                ctx=ctx,
-            )
-
-        assert isinstance(result, dict)
-        assert len(result["items"]) == 20  # Limited to 20
-        assert result["items"][0]["label"] == "test_0"
-        assert result["items"][0]["offset"] == 0
-        assert "documentation" not in result["items"][0]  # Not included
-        assert result["totalItems"] == 100
-        assert result["hasMore"]
-        assert result["nextOffset"] == 20
-
-        # Test getting specific item using offset
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            # Get single item at offset 42
-            result_single = await tools.completion(
-                "src/main.rs",
-                5,
-                10,
-                limit=1,
-                offset=42,
-                include_detail=True,
-                include_documentation=True,
-                ctx=ctx,
-            )
-
-        assert len(result_single["items"]) == 1
-        # Items are sorted, so we get whatever is at position 42 after sorting
-        assert result_single["items"][0]["label"].startswith("test_")
-        assert result_single["items"][0]["offset"] == 42
-        assert "documentation" in result_single["items"][0]  # Included
-        assert result_single["offset"] == 42
-        assert result_single["hasMore"]  # More items after this one
-
     async def test_definition_tool(self) -> None:
         """Test definition tool."""
         mock_client = MagicMock()
@@ -308,8 +210,8 @@ class TestLanguageFeatureTools:
         assert result["totalItems"] == 1
         assert not result["hasMore"]
 
-    async def test_members_tool(self, tmp_path: Path) -> None:
-        """Test members tool with hybrid approach (fields via document_symbols, methods via completion)."""
+    async def test_type_info_tool(self, tmp_path: Path) -> None:
+        """Test type_info tool with hybrid approach (fields via document_symbols, methods via completion)."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.is_ready.return_value = True
@@ -360,18 +262,19 @@ class TestLanguageFeatureTools:
                 },
             },
             # 4. completion response (methods via dot completion)
+            # Only kind 2 (Method) items are included - kind 3 (Function) are filtered out
             [
                 {
                     "label": "add",
                     "kind": 2,
                     "detail": "fn(&mut self, n: i32)",
-                },  # Method
-                {"label": "new", "kind": 3, "detail": "fn() -> Calculator"},  # Function
+                },  # Method - included
+                {"label": "new", "kind": 3, "detail": "fn() -> Calculator"},  # Function - filtered out
                 {
                     "label": "value",
                     "kind": 5,
                     "detail": "i32",
-                },  # Field (should be filtered out)
+                },  # Field - filtered out
             ],
             # 5. completionItem/resolve for "add"
             {
@@ -379,45 +282,39 @@ class TestLanguageFeatureTools:
                 "kind": 2,
                 "detail": "fn(&mut self, n: i32)",
             },
-            # 6. completionItem/resolve for "new"
-            {
-                "label": "new",
-                "kind": 3,
-                "detail": "fn() -> Calculator",
-            },
         ]
         mock_client.request = AsyncMock(side_effect=request_responses)
 
         with patch.object(server_module, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await tools.members(str(test_file), 0, 5, ctx=ctx)
+            result = await tools.type_info(str(test_file), 0, 5, ctx=ctx)
 
         assert isinstance(result, dict)
         assert result["typeName"] == "Calculator"
         assert result["typeKind"] == "struct"
+        assert result["typeLocation"]["file_path"] == "/src/lib.rs"
+        assert result["typeLocation"]["line"] == 10
+        assert result["typeLocation"]["character"] == 0
         assert len(result["fields"]) == 1
         assert result["fields"][0]["name"] == "value"
         assert result["fields"][0]["detail"] == "i32"
 
-        # Methods from completion (only kind 2=Method and 3=Function)
-        assert len(result["methods"]) == 2
-        # Methods should be sorted by name (inherent first, then by name)
+        # Methods from completion (only kind 2=Method)
+        assert len(result["methods"]) == 1
         assert result["methods"][0]["name"] == "add"
         assert result["methods"][0]["detail"] == "fn(&mut self, n: i32)"
         assert result["methods"][0]["trait"] is None
         assert result["methods"][0]["needsImport"] is False
         # No documentation by default
         assert "documentation" not in result["methods"][0]
-        assert result["methods"][1]["name"] == "new"
-        assert result["methods"][1]["detail"] == "fn() -> Calculator"
 
         # Check pagination metadata
         assert result["totalFields"] == 1
-        assert result["totalMethods"] == 2
+        assert result["totalMethods"] == 1
         assert not result["hasMore"]
 
-    async def test_members_tool_with_traits(self, tmp_path: Path) -> None:
-        """Test members tool includes trait implementations via completion."""
+    async def test_type_info_tool_with_traits(self, tmp_path: Path) -> None:
+        """Test type_info tool includes trait implementations via completion."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.is_ready.return_value = True
@@ -468,9 +365,10 @@ class TestLanguageFeatureTools:
         mock_client.request = AsyncMock(side_effect=request_responses)
 
         with patch.object(server_module, "rust_analyzer", mock_client):
-            result = await tools.members(str(test_file), 0, 5)
+            result = await tools.type_info(str(test_file), 0, 5)
 
         # Should have 3 methods
+        assert result["typeLocation"]["file_path"] == "/src/lib.rs"
         assert len(result["methods"]) == 3
 
         # Inherent methods should come first (sorted by trait=None first)
@@ -492,21 +390,116 @@ class TestLanguageFeatureTools:
         assert result["methods"][2]["detail"] == "fn(&self)"
         assert result["methods"][2]["needsImport"] is True
 
-    async def test_members_tool_no_type_found(self) -> None:
-        """Test members tool when no type is at position."""
+    async def test_type_info_tool_no_type_found(self) -> None:
+        """Test type_info tool when no type is at position (both type_def and hover fail)."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.is_ready.return_value = True
+        # Both type_definition and hover return None
         mock_client.request = AsyncMock(return_value=None)
 
         with patch.object(server_module, "rust_analyzer", mock_client):
-            result = await tools.members("src/main.rs", 5, 10)
+            result = await tools.type_info("src/main.rs", 5, 10)
 
         assert "error" in result
-        assert "No type definition found" in result["error"]
+        assert "Could not determine type" in result["error"]
 
-    async def test_members_tool_with_location_link(self, tmp_path: Path) -> None:
-        """Test members tool handles LocationLink format (targetUri instead of uri)."""
+    async def test_type_info_tool_primitive_type(self, tmp_path: Path) -> None:
+        """Test type_info tool with primitive type (f32, i32, etc.)."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("let x: f32 = 1.0;\n")
+
+        request_responses = [
+            # 1. type_definition returns None for primitives
+            None,
+            # 2. hover response to get type name
+            {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "```rust\nx: f32\n```",
+                },
+            },
+            # No completion calls - we skip method lookup for primitives
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            result = await tools.type_info(str(test_file), 0, 5)
+
+        assert isinstance(result, dict)
+        assert result["typeName"] == "f32"
+        assert result["typeKind"] == "primitive"
+        assert result["typeLocation"] is None  # No location for primitives
+        assert result["fields"] == []  # Primitives have no fields
+        assert result["methods"] == []  # Methods not available for primitives
+
+    async def test_type_info_tool_pin_type_fallback(self, tmp_path: Path) -> None:
+        """Test type_info tool with Pin type (async_trait macro expansion)."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("let x: [f32; 2] = [0.0, 0.0];\n")
+
+        # Pin type is in std library - no local file to open
+        type_uri = "file:///rustc/some_hash/library/core/src/pin.rs"
+        request_responses = [
+            # 1. type_definition returns Pin type (happens in async_trait)
+            {
+                "uri": type_uri,
+                "range": {"start": {"line": 100, "character": 0}},
+            },
+            # 2. document_symbols for Pin type
+            [
+                {
+                    "name": "Pin",
+                    "kind": 23,  # Struct
+                    "range": {"start": {"line": 100, "character": 0}},
+                    "selectionRange": {"start": {"line": 100, "character": 7}},
+                    "children": [
+                        {
+                            "name": "__pointer",
+                            "kind": 8,  # Field
+                            "range": {"start": {"line": 101, "character": 4}},
+                            "selectionRange": {"start": {"line": 101, "character": 4}},
+                        },
+                    ],
+                },
+            ],
+            # 3. hover response to get actual type (fallback for Pin)
+            {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "```rust\nx: [f32; 2]\n```",
+                },
+            },
+            # No completion calls - we skip method lookup for Pin fallback
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            result = await tools.type_info(str(test_file), 0, 5)
+
+        assert isinstance(result, dict)
+        assert result["typeName"] == "[f32; 2]"
+        assert result["typeKind"] == "unknown"
+        assert result["typeLocation"] is None  # No location for Pin fallback
+        assert result["fields"] == []  # Fields cleared for Pin fallback
+        assert result["methods"] == []  # Methods skipped for Pin fallback
+
+    async def test_type_info_tool_with_location_link(self, tmp_path: Path) -> None:
+        """Test type_info tool handles LocationLink format (targetUri instead of uri)."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.is_ready.return_value = True
@@ -538,26 +531,30 @@ class TestLanguageFeatureTools:
                     "children": [],
                 },
             ],
-            # 3. completion response
+            # 3. completion response - only kind 2 (Method) items are included
             [
-                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},  # Filtered out
+                {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},  # Included
             ],
-            # 4. completionItem/resolve for "new"
-            {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+            # 4. completionItem/resolve for "clone"
+            {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
         ]
         mock_client.request = AsyncMock(side_effect=request_responses)
 
         with patch.object(server_module, "rust_analyzer", mock_client):
-            result = await tools.members(str(test_file), 0, 5)
+            result = await tools.type_info(str(test_file), 0, 5)
 
         assert result["typeName"] == "MyStruct"
+        assert result["typeLocation"]["file_path"] == "/src/lib.rs"
+        assert result["typeLocation"]["line"] == 5
+        assert result["typeLocation"]["character"] == 0
         assert len(result["methods"]) == 1
-        assert result["methods"][0]["name"] == "new"
-        assert result["methods"][0]["detail"] == "fn() -> MyStruct"
+        assert result["methods"][0]["name"] == "clone"
+        assert result["methods"][0]["detail"] == "fn(&self) -> Self"
         assert "documentation" not in result["methods"][0]
 
-    async def test_members_tool_with_existing_dot(self, tmp_path: Path) -> None:
-        """Test members tool when cursor is on variable with existing dot."""
+    async def test_type_info_tool_with_existing_dot(self, tmp_path: Path) -> None:
+        """Test type_info tool when cursor is on variable with existing dot."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
         mock_client.is_ready.return_value = True
@@ -582,32 +579,28 @@ class TestLanguageFeatureTools:
                     "children": [],
                 },
             ],
-            # 3. completion response
+            # 3. completion response - only kind 2 (Method) items are included
             [
                 {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
-                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},  # Filtered out
             ],
-            # 4-5. completionItem/resolve for each method
+            # 4. completionItem/resolve for clone
             {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
-            {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
         ]
         mock_client.request = AsyncMock(side_effect=request_responses)
 
         with patch.object(server_module, "rust_analyzer", mock_client):
             # Cursor on "my_struct" (position 0-8), dot is at position 9
-            result = await tools.members(str(test_file), 0, 3)
+            result = await tools.type_info(str(test_file), 0, 3)
 
         assert result["typeName"] == "MyStruct"
-        # Should have found methods via completion
-        assert len(result["methods"]) == 2
-        # Methods sorted: inherent first (new), then trait (clone)
-        assert result["methods"][0]["name"] == "new"
-        assert result["methods"][0]["trait"] is None
-        assert result["methods"][0]["detail"] == "fn() -> MyStruct"
+        assert result["typeLocation"]["file_path"] == "/src/lib.rs"
+        # Should have found methods via completion (only kind 2)
+        assert len(result["methods"]) == 1
+        assert result["methods"][0]["name"] == "clone"
+        assert result["methods"][0]["trait"] == "Clone"
+        assert result["methods"][0]["detail"] == "fn(&self) -> Self"
         assert "documentation" not in result["methods"][0]
-        assert result["methods"][1]["name"] == "clone"
-        assert result["methods"][1]["trait"] == "Clone"
-        assert result["methods"][1]["detail"] == "fn(&self) -> Self"
         # notify NOT called when dot already exists (no document modification needed)
         mock_client.notify.assert_not_called()
 
@@ -674,31 +667,6 @@ class TestCodeIntelligenceTools:
         assert result["items"][0]["offset"] == 0
         assert result["totalItems"] == 1
         assert not result["hasMore"]
-
-    async def test_code_actions_tool(self) -> None:
-        """Test code actions tool."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        mock_client.request = AsyncMock(
-            return_value=[
-                {
-                    "title": "Import `std::io`",
-                    "kind": "quickfix",
-                    "edit": {"changes": {}},
-                }
-            ]
-        )
-
-        server_module.current_diagnostics.clear()
-        server_module.current_diagnostics["file:///src/main.rs"] = [{"severity": 1}]
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            result = await tools.code_actions("src/main.rs", 10, 0, 10, 20, ctx)
-
-        assert len(result) == 1
-        assert result[0]["title"] == "Import `std::io`"
 
     async def test_rename_tool(self) -> None:
         """Test rename tool."""
@@ -797,69 +765,6 @@ class TestRustAnalyzerExtensions:
             result = await tools.expand_macro("src/main.rs", 10, 5, ctx)
 
         assert "expansion" in result
-
-    async def test_analyzer_status_tool(self) -> None:
-        """Test analyzer status tool."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        mock_client.request = AsyncMock(return_value="Analyzer: ready\nMemory: 100MB")
-        mock_client.get_progress_status.return_value = {
-            "busy": False,
-            "ready": True,
-            "activeTasks": [],
-            "message": None,
-        }
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            result = await tools.analyzer_status(ctx)
-
-        assert "Analyzer: ready" in result["internalStatus"]
-        assert result["progress"]["ready"] is True
-
-    async def test_related_tests_tool(self) -> None:
-        """Test related tests tool."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        mock_client.request = AsyncMock(
-            return_value=[
-                {
-                    "uri": "file:///src/main.rs",
-                    "range": {"start": {"line": 50, "character": 0}},
-                }
-            ]
-        )
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            result = await tools.related_tests("src/main.rs", 10, 5, ctx)
-
-        assert len(result) == 1
-
-    async def test_runnables_tool(self) -> None:
-        """Test runnables tool."""
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.is_ready.return_value = True
-        mock_client.request = AsyncMock(
-            return_value=[
-                {
-                    "label": "test test_add",
-                    "kind": "test",
-                    "args": {"cargoArgs": ["test", "test_add"], "executableArgs": []},
-                }
-            ]
-        )
-
-        with patch.object(server_module, "rust_analyzer", mock_client):
-            ctx = AsyncMock()
-            result = await tools.runnables("src/main.rs", ctx=ctx)
-
-        assert len(result) == 1
-        assert result[0]["label"] == "test test_add"
-
 
 @pytest.mark.asyncio
 class TestServerLifecycle:

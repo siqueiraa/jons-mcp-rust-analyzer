@@ -54,45 +54,6 @@ class TestRustAnalyzerIntegration:
         # This is expected behavior in a test environment
         assert response is None or "contents" in response
 
-    async def test_completion_on_real_code(
-        self, rust_analyzer_client: RustAnalyzerClient, temp_rust_project: Path
-    ) -> None:
-        """Test completion on real Rust code."""
-        file_uri = f"file://{temp_rust_project}/src/main.rs"
-
-        # Open the document
-        file_content = (temp_rust_project / "src" / "main.rs").read_text()
-        await rust_analyzer_client.notify(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": file_uri,
-                    "languageId": "rust",
-                    "version": 1,
-                    "text": file_content,
-                }
-            },
-        )
-
-        await asyncio.sleep(1.0)
-
-        # Get completions after "pr" (should suggest println!, print!, etc.)
-        response = await rust_analyzer_client.request(
-            "textDocument/completion",
-            {
-                "textDocument": {"uri": file_uri},
-                "position": {"line": 2, "character": 0},  # Empty line
-            },
-        )
-
-        # Response can be array, CompletionList, or None if still indexing
-        if response:
-            items = response if isinstance(response, list) else response.get("items", [])
-            assert isinstance(items, list)
-        else:
-            # It's OK if no completions are available yet
-            assert response is None
-
     async def test_document_symbols_on_real_code(
         self, rust_analyzer_client: RustAnalyzerClient, temp_rust_project: Path
     ) -> None:

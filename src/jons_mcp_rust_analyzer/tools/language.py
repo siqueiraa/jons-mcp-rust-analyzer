@@ -8,7 +8,6 @@ from fastmcp import Context
 from ..constants import DEFAULT_PAGINATION_LIMIT, DEFAULT_PAGINATION_OFFSET, LSPMethods
 from ..utils import (
     apply_pagination,
-    completion_sort_key,
     ensure_file_uri,
     flatten_document_symbols,
     location_sort_key,
@@ -52,92 +51,6 @@ async def symbol_info(
     return dict(response) if isinstance(response, dict) else {"contents": response}
 
 
-async def completion(
-    file_path: str,
-    line: int,
-    character: int,
-    limit: int = DEFAULT_PAGINATION_LIMIT,
-    offset: int = DEFAULT_PAGINATION_OFFSET,
-    include_detail: bool = True,
-    include_documentation: bool = False,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Get code completions at position (0-indexed).
-
-    Returns {items, totalItems, hasMore, nextOffset} where each item has:
-    - label: Completion text
-    - kind: Completion type (1=Text, 2=Method, 3=Function, 5=Field, 6=Variable, etc.)
-    - detail: Type signature (if include_detail=true)
-    - documentation: Doc comments (if include_documentation=true)
-
-    Paginated: use limit/offset, check hasMore for more results.
-    """
-    from ..server import ensure_rust_analyzer_indexed
-
-    client = await ensure_rust_analyzer_indexed()
-    file_uri = ensure_file_uri(file_path)
-
-    if ctx:
-        await ctx.info(
-            f"Getting completions at {file_path}:{line}:{character} "
-            f"(limit: {limit}, offset: {offset})"
-        )
-
-    response = await client.request(
-        LSPMethods.COMPLETION,
-        {
-            "textDocument": {"uri": file_uri},
-            "position": {"line": line, "character": character},
-        },
-    )
-
-    items: list[dict[str, Any]] = []
-    is_incomplete = False
-
-    if isinstance(response, list):
-        items = response
-    elif isinstance(response, dict):
-        items = response.get("items", [])
-        is_incomplete = response.get("isIncomplete", False)
-
-    items.sort(key=completion_sort_key)
-
-    total_items = len(items)
-    start_idx = min(offset, total_items)
-    end_idx = min(start_idx + limit, total_items)
-    paginated_items = items[start_idx:end_idx]
-
-    has_more = end_idx < total_items
-
-    processed_items = []
-    for i, item in enumerate(paginated_items):
-        processed_item: dict[str, Any] = {
-            "label": item.get("label", ""),
-            "kind": item.get("kind"),
-            "offset": start_idx + i,
-        }
-
-        if include_detail and "detail" in item:
-            processed_item["detail"] = item["detail"]
-
-        if include_documentation and "documentation" in item:
-            processed_item["documentation"] = item["documentation"]
-
-        processed_items.append(processed_item)
-
-    return {
-        "items": processed_items,
-        "isIncomplete": is_incomplete,
-        "totalItems": total_items,
-        "offset": offset,
-        "limit": limit,
-        "hasMore": has_more,
-        "nextOffset": end_idx if has_more else None,
-        "includeDetail": include_detail,
-        "includeDocumentation": include_documentation,
-    }
-
-
 async def definition(
     file_path: str,
     line: int,
@@ -166,36 +79,6 @@ async def definition(
     )
 
     return response or {"message": "No definition found"}
-
-
-async def type_definition(
-    file_path: str,
-    line: int,
-    character: int,
-    ctx: Context | None = None,
-) -> dict[str, Any] | list[dict[str, Any]]:
-    """Go to type definition of symbol at position (0-indexed).
-
-    Returns location(s) where the type is defined: {uri, range}.
-    Use this to find the struct/enum/trait definition for a variable's type.
-    """
-    from ..server import ensure_rust_analyzer_indexed
-
-    client = await ensure_rust_analyzer_indexed()
-    file_uri = ensure_file_uri(file_path)
-
-    if ctx:
-        await ctx.info(f"Finding type definition at {file_path}:{line}:{character}")
-
-    response = await client.request(
-        LSPMethods.TYPE_DEFINITION,
-        {
-            "textDocument": {"uri": file_uri},
-            "position": {"line": line, "character": character},
-        },
-    )
-
-    return response or {"message": "No type definition found"}
 
 
 async def implementation(
@@ -469,7 +352,12 @@ async def _get_methods_via_completion(
         if isinstance(response, list)
         else (response.get("items", []) if response else [])
     )
-    method_items = [item for item in items if item.get("kind") in (2, 3)]
+
+    # Filter to actual methods only (kind 2)
+    # Kind 3 (Function) items from completion after a dot are usually not useful -
+    # they're free functions and macros in scope, not actual methods on the type.
+    # True methods have kind 2 in rust-analyzer's completion results.
+    method_items = [item for item in items if item.get("kind") == 2]
 
     methods: list[dict[str, Any]] = []
 
@@ -524,7 +412,7 @@ async def _get_methods_via_completion(
     return methods
 
 
-async def members(
+async def type_info(
     file_path: str,
     line: int,
     character: int,
@@ -533,15 +421,19 @@ async def members(
     include_documentation: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get fields and methods available on the type at position.
+    """Get complete type information including fields and methods for the type at position.
 
-    Call this on a variable to discover all fields and methods you can access on it.
+    Call this on a variable or expression to discover its type and all accessible members.
+    This is the primary tool for understanding what you can do with a value.
+    Works with both user-defined types (structs, enums) and primitive types (f32, i32, bool).
 
     Response includes:
-    - typeName, typeKind: The type's name and kind (struct, enum, etc.)
-    - fields: Array of {name, kind, detail}
+    - typeName: The type's name (e.g., "Vec", "MyStruct", "f32")
+    - typeKind: Kind of type (struct, enum, class, interface, primitive)
+    - typeLocation: Where the type is defined {file_path, line, character}, or null for primitives
+    - fields: Array of field members with {name, kind, detail} (empty for primitives)
       - detail: Field type (e.g., "i32", "Vec<String>")
-    - methods: Array of {name, kind, detail, trait, needsImport}
+    - methods: Array of method members with {name, kind, detail, trait, needsImport}
       - detail: Method signature with parameter names (e.g., "fn(&self, count: i32) -> bool")
       - trait: Which trait this method comes from, or null for inherent methods
       - needsImport: Whether the trait needs to be imported to use this method
@@ -581,80 +473,172 @@ async def members(
         },
     )
 
-    if not type_def_response:
-        return {"error": "No type definition found at position"}
-
     # Handle single location or array of locations
-    if isinstance(type_def_response, list):
-        type_location = type_def_response[0] if type_def_response else None
-    else:
-        type_location = type_def_response
+    type_location = None
+    if type_def_response:
+        if isinstance(type_def_response, list):
+            type_location = type_def_response[0] if type_def_response else None
+        else:
+            type_location = type_def_response
 
-    if not type_location:
-        return {"error": "No type definition found at position"}
-
-    # Handle both Location (uri, range) and LocationLink (targetUri, targetRange) formats
-    type_uri = type_location.get("uri") or type_location.get("targetUri") or ""
-    type_range = type_location.get("range") or type_location.get("targetRange") or {}
-    type_start = type_range.get("start", {})
-    type_line = type_start.get("line", 0)
-
-    if not type_uri:
-        return {"error": "No type definition found at position (empty URI)"}
-
-    logger.info(f"members: type definition at {type_uri}:{type_line}")
-
-    # Step 2: Open the type definition file if it's a local file
-    # This is needed for hover to work on fields
-    type_file_path = type_uri.replace("file://", "")
+    # Initialize variables for type info
+    type_uri = ""
+    type_line = 0
+    type_character = 0
+    type_location_info: dict[str, Any] | None = None
     type_file_content = None
-    if Path(type_file_path).exists():
-        try:
-            type_file_content = Path(type_file_path).read_text()
-            await client.notify(
-                LSPMethods.DID_OPEN,
+    type_name = "unknown"
+    type_kind = "primitive"  # Default to primitive if no type definition found
+    field_symbols: list[dict[str, Any]] = []
+    is_primitive_fallback = False  # Track if we're using hover fallback
+
+    if type_location:
+        # Handle both Location (uri, range) and LocationLink (targetUri, targetRange) formats
+        type_uri = type_location.get("uri") or type_location.get("targetUri") or ""
+        type_range = type_location.get("range") or type_location.get("targetRange") or {}
+        type_start = type_range.get("start", {})
+        type_line = type_start.get("line", 0)
+        type_character = type_start.get("character", 0)
+
+    if type_uri:
+        # We have a type definition location - this is a user-defined type
+        type_file_path = type_uri.replace("file://", "")
+        type_location_info = {
+            "file_path": type_file_path,
+            "line": type_line,
+            "character": type_character,
+        }
+
+        logger.info(f"type_info: type definition at {type_uri}:{type_line}")
+
+        # Step 2: Open the type definition file if it's a local file
+        # This is needed for hover to work on fields
+        if Path(type_file_path).exists():
+            try:
+                type_file_content = Path(type_file_path).read_text()
+                await client.notify(
+                    LSPMethods.DID_OPEN,
+                    {
+                        "textDocument": {
+                            "uri": type_uri,
+                            "languageId": "rust",
+                            "version": 1,
+                            "text": type_file_content,
+                        }
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Failed to open type file {type_uri}: {e}")
+
+        # Step 3: Get document symbols for the type definition file to find fields
+        type_symbols_response = await client.request(
+            LSPMethods.DOCUMENT_SYMBOL,
+            {"textDocument": {"uri": type_uri}},
+        )
+
+        type_symbols = type_symbols_response or []
+
+        # Find the type symbol at the definition location
+        for symbol in type_symbols:
+            symbol_range = symbol.get("range", {})
+            symbol_start = symbol_range.get("start", {})
+            if symbol_start.get("line") == type_line:
+                type_name = symbol.get("name", "unknown")
+                # LSP SymbolKind: 5=Class, 23=Struct, 10=Enum, 11=Interface
+                kind_num = symbol.get("kind", 0)
+                kind_map = {5: "class", 23: "struct", 10: "enum", 11: "interface"}
+                type_kind = kind_map.get(kind_num, "unknown")
+
+                # Extract fields from children
+                for child in symbol.get("children", []):
+                    child_kind = child.get("kind", 0)
+                    # LSP SymbolKind: 8=Field
+                    if child_kind == 8:
+                        field_symbols.append(child)
+                break
+
+        # Check for Pin type (often from async_trait macro expansion)
+        # In this case, use hover to get the actual user-visible type
+        if type_name.startswith("Pin"):
+            logger.info(
+                f"type_info: detected Pin type ({type_name}), falling back to hover"
+            )
+            hover_response = await client.request(
+                LSPMethods.HOVER,
                 {
-                    "textDocument": {
-                        "uri": type_uri,
-                        "languageId": "rust",
-                        "version": 1,
-                        "text": type_file_content,
-                    }
+                    "textDocument": {"uri": file_uri},
+                    "position": {"line": line, "character": character},
                 },
             )
-        except Exception as e:
-            logger.warning(f"Failed to open type file {type_uri}: {e}")
 
-    # Step 3: Get document symbols for the type definition file to find fields
-    type_symbols_response = await client.request(
-        LSPMethods.DOCUMENT_SYMBOL,
-        {"textDocument": {"uri": type_uri}},
-    )
+            if hover_response:
+                contents = hover_response.get("contents", {})
+                if isinstance(contents, list):
+                    contents = contents[0] if contents else {}
+                if isinstance(contents, str):
+                    type_name = contents.strip()
+                elif isinstance(contents, dict):
+                    value = contents.get("value", "")
+                    lines = value.split("\n")
+                    for hover_line in lines:
+                        hover_line = hover_line.strip()
+                        if hover_line.startswith("```"):
+                            continue
+                        if ": " in hover_line:
+                            type_name = hover_line.split(": ", 1)[1].strip()
+                            break
+                        elif hover_line and not hover_line.startswith("//"):
+                            type_name = hover_line
+                            break
 
-    type_symbols = type_symbols_response or []
+            # Clear type location and fields since Pin is not the actual type
+            type_location_info = None
+            type_kind = "unknown"
+            field_symbols = []
+            is_primitive_fallback = True
+            logger.info(f"type_info: hover returned actual type: {type_name}")
+    else:
+        # No type definition found - likely a primitive type (f32, i32, bool, etc.)
+        # Fall back to hover to get the type name
+        logger.info("type_info: no type definition, falling back to hover for type name")
 
-    # Find the type symbol at the definition location
-    type_name = "unknown"
-    type_kind = "unknown"
-    field_symbols: list[dict[str, Any]] = []
+        hover_response = await client.request(
+            LSPMethods.HOVER,
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": character},
+            },
+        )
 
-    for symbol in type_symbols:
-        symbol_range = symbol.get("range", {})
-        symbol_start = symbol_range.get("start", {})
-        if symbol_start.get("line") == type_line:
-            type_name = symbol.get("name", "unknown")
-            # LSP SymbolKind: 5=Class, 23=Struct, 10=Enum, 11=Interface
-            kind_num = symbol.get("kind", 0)
-            kind_map = {5: "class", 23: "struct", 10: "enum", 11: "interface"}
-            type_kind = kind_map.get(kind_num, "unknown")
+        if hover_response:
+            contents = hover_response.get("contents", {})
+            # Contents may be string, {kind, value}, or array
+            if isinstance(contents, list):
+                contents = contents[0] if contents else {}
+            if isinstance(contents, str):
+                # Try to extract type from hover text
+                type_name = contents.strip()
+            elif isinstance(contents, dict):
+                value = contents.get("value", "")
+                # Parse type from markdown hover (e.g., "```rust\nlet x: f32\n```")
+                lines = value.split("\n")
+                for hover_line in lines:
+                    hover_line = hover_line.strip()
+                    if hover_line.startswith("```"):
+                        continue
+                    # Look for type annotation pattern "name: Type" or just the type
+                    if ": " in hover_line:
+                        type_name = hover_line.split(": ", 1)[1].strip()
+                        break
+                    elif hover_line and not hover_line.startswith("//"):
+                        type_name = hover_line
+                        break
 
-            # Extract fields from children
-            for child in symbol.get("children", []):
-                child_kind = child.get("kind", 0)
-                # LSP SymbolKind: 8=Field
-                if child_kind == 8:
-                    field_symbols.append(child)
-            break
+        if type_name == "unknown":
+            return {"error": "Could not determine type at position"}
+
+        is_primitive_fallback = True
+        logger.info(f"type_info: detected primitive/external type: {type_name}")
 
     # Step 3: Get field types via hover
     fields: list[dict[str, Any]] = []
@@ -725,7 +709,7 @@ async def members(
         )
 
     logger.info(
-        f"members: found type {type_name} ({type_kind}) with {len(fields)} fields"
+        f"type_info: found type {type_name} ({type_kind}) with {len(fields)} fields"
     )
 
     # Close the type file if we opened it
@@ -739,14 +723,17 @@ async def members(
             logger.warning(f"Failed to close type file {type_uri}: {e}")
 
     # Step 5: Get methods via completion (finds ALL methods including trait impls)
-    methods = await _get_methods_via_completion(
-        client, file_uri, resolved_path, line, character, include_documentation
-    )
-
-    # Sort methods: inherent first, then by trait, then by name
-    methods.sort(key=members_method_sort_key)
-
-    logger.info(f"members: found {len(methods)} methods via completion")
+    # Skip for primitive types - completion doesn't return useful method info
+    methods: list[dict[str, Any]] = []
+    if not is_primitive_fallback:
+        methods = await _get_methods_via_completion(
+            client, file_uri, resolved_path, line, character, include_documentation
+        )
+        # Sort methods: inherent first, then by trait, then by name
+        methods.sort(key=members_method_sort_key)
+        logger.info(f"type_info: found {len(methods)} methods via completion")
+    else:
+        logger.info("type_info: skipping method completion for primitive type")
 
     # Calculate totals
     total_fields = len(fields)
@@ -762,6 +749,7 @@ async def members(
     return {
         "typeName": type_name,
         "typeKind": type_kind,
+        "typeLocation": type_location_info,
         "fields": fields,
         "methods": paginated_methods,
         "totalFields": total_fields,

@@ -53,49 +53,6 @@ async def diagnostics(
     return {"items": paginated_items, **metadata}
 
 
-async def code_actions(
-    file_path: str,
-    start_line: int,
-    start_char: int,
-    end_line: int,
-    end_char: int,
-    ctx: Context | None = None,
-) -> list[dict[str, Any]]:
-    """Get available quick fixes and refactorings for a range (0-indexed).
-
-    Returns array of actions, each with:
-    - title: Description of the action
-    - kind: Category (quickfix, refactor, refactor.extract, etc.)
-    - edit: WorkspaceEdit to apply (if action is immediate)
-    - command: Command to execute (if action requires server-side processing)
-
-    Common actions: fix imports, extract function, inline variable, add derive, etc.
-    """
-    from ..server import current_diagnostics, ensure_rust_analyzer_indexed
-
-    client = await ensure_rust_analyzer_indexed()
-    file_uri = ensure_file_uri(file_path)
-
-    if ctx:
-        await ctx.info(f"Getting code actions for {file_path}")
-
-    file_diagnostics = current_diagnostics.get(file_uri, [])
-
-    response = await client.request(
-        LSPMethods.CODE_ACTION,
-        {
-            "textDocument": {"uri": file_uri},
-            "range": {
-                "start": {"line": start_line, "character": start_char},
-                "end": {"line": end_line, "character": end_char},
-            },
-            "context": {"diagnostics": file_diagnostics},
-        },
-    )
-
-    return response or []
-
-
 async def rename(
     file_path: str,
     line: int,

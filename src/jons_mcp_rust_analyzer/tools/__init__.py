@@ -1,46 +1,33 @@
 """MCP tools for rust-analyzer functionality."""
 
-from .extensions import (
-    analyzer_status,
-    expand_macro,
-    related_tests,
-    runnables,
-)
+from .extensions import expand_macro
 from .formatting import format_document, format_range
-from .intelligence import code_actions, diagnostics, rename
+from .intelligence import diagnostics, rename
 from .language import (
-    completion,
     definition,
     document_symbols,
     implementation,
-    members,
     references,
     symbol_info,
-    type_definition,
+    type_info,
     workspace_symbols,
 )
 
 __all__ = [
     # Language features
     "symbol_info",
-    "completion",
-    "members",
+    "type_info",
     "definition",
-    "type_definition",
     "implementation",
     "references",
     "document_symbols",
     "workspace_symbols",
     # Code intelligence
     "diagnostics",
-    "code_actions",
     "rename",
     # Formatting
     "format_document",
     "format_range",
     # rust-analyzer extensions
     "expand_macro",
-    "analyzer_status",
-    "related_tests",
-    "runnables",
 ]

@@ -23,9 +23,6 @@ from .lsp_client import RustAnalyzerClient
 _project_root: Path | None = None
 
 from .tools import (
-    analyzer_status,
-    code_actions,
-    completion,
     definition,
     diagnostics,
     document_symbols,
@@ -33,13 +30,10 @@ from .tools import (
     format_document,
     format_range,
     implementation,
-    members,
     references,
-    related_tests,
     rename,
-    runnables,
     symbol_info,
-    type_definition,
+    type_info,
     workspace_symbols,
 )
 
@@ -150,30 +144,54 @@ mcp = FastMCP(
     name="rust-analyzer-mcp",
     lifespan=lifespan,
     instructions="""
-This server provides rust-analyzer LSP features for Rust code intelligence.
+MCP server providing rust-analyzer LSP features for Rust code intelligence.
 
-Start with these tools for navigation:
-- workspace_symbols: Search for types/functions across the project
-- document_symbols: List symbols in a specific file
-- definition/type_definition: Jump to where something is defined
+## Navigation & Discovery
+| Tool | Purpose |
+|------|---------|
+| workspace_symbols | Search for types/functions across the project by name |
+| document_symbols | List all symbols defined in a file |
+| definition | Jump to where a symbol is defined |
+| implementation | Find trait implementations or impl blocks |
+| references | Find all usages of a symbol |
 
-For understanding code:
-- symbol_info: Get full type signature and docs at a position
-- members: Get fields/methods available on a type (returns symbol_info_args for each)
-- references: Find all usages of a symbol
-- implementation: Find trait implementations
+## Understanding Code
+| Tool | Purpose |
+|------|---------|
+| type_info | Get type name, fields, and methods for a value (primary tool) |
+| symbol_info | Get type signature and docs for any symbol (via hover) |
 
-Typical workflow for exploring a type:
-1. Call members(file, line, char) to get all fields and methods
-2. For any member of interest, call symbol_info with its symbol_info_args
+## Code Intelligence
+| Tool | Purpose |
+|------|---------|
+| diagnostics | Get compiler errors and warnings |
 
-For modifications:
-- diagnostics: Check for errors before/after changes
-- code_actions: Get available fixes/refactorings
-- rename: Safely rename symbols across the project
+## Refactoring
+| Tool | Purpose |
+|------|---------|
+| rename | Safely rename a symbol across the project |
 
-Paginated tools (completion, references, document_symbols, workspace_symbols,
-diagnostics, members) return max 20 items by default. Use limit/offset and check
+## Formatting
+| Tool | Purpose |
+|------|---------|
+| format_document | Format an entire file |
+| format_range | Format a specific range |
+
+## Macros
+| Tool | Purpose |
+|------|---------|
+| expand_macro | Show macro expansion at a position |
+
+## Typical Workflow
+1. Use workspace_symbols or document_symbols to find code
+2. Call type_info on a variable to discover its type, fields, and methods
+3. Use definition to navigate to source, references to find usages
+4. Check diagnostics after making changes
+5. Use format_range to format lines around your changes
+
+## Pagination
+Tools returning lists (references, document_symbols, workspace_symbols, diagnostics,
+type_info methods) return max 20 items. Use limit/offset parameters and check
 hasMore for additional results.
 """,
 )
@@ -181,23 +199,17 @@ hasMore for additional results.
 
 # Register all tools with the MCP server
 mcp.tool(symbol_info)
-mcp.tool(completion)
-mcp.tool(members)
+mcp.tool(type_info)
 mcp.tool(definition)
-mcp.tool(type_definition)
 mcp.tool(implementation)
 mcp.tool(references)
 mcp.tool(document_symbols)
 mcp.tool(workspace_symbols)
 mcp.tool(diagnostics)
-mcp.tool(code_actions)
 mcp.tool(rename)
 mcp.tool(format_document)
 mcp.tool(format_range)
 mcp.tool(expand_macro)
-mcp.tool(analyzer_status)
-mcp.tool(related_tests)
-mcp.tool(runnables)
 
 
 # Signal handling for graceful shutdown

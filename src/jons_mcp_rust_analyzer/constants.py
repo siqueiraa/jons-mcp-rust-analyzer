@@ -40,12 +40,10 @@ class LSPMethods:
     IMPLEMENTATION = "textDocument/implementation"
     REFERENCES = "textDocument/references"
     DOCUMENT_SYMBOL = "textDocument/documentSymbol"
-    CODE_ACTION = "textDocument/codeAction"
     RENAME = "textDocument/rename"
     PREPARE_RENAME = "textDocument/prepareRename"
     FORMATTING = "textDocument/formatting"
     RANGE_FORMATTING = "textDocument/rangeFormatting"
-    SEMANTIC_TOKENS_FULL = "textDocument/semanticTokens/full"
     PUBLISH_DIAGNOSTICS = "textDocument/publishDiagnostics"
 
     # Workspace
@@ -53,9 +51,6 @@ class LSPMethods:
 
     # rust-analyzer extensions
     EXPAND_MACRO = "rust-analyzer/expandMacro"
-    ANALYZER_STATUS = "rust-analyzer/analyzerStatus"
-    RELATED_TESTS = "rust-analyzer/relatedTests"
-    RUNNABLES = "rust-analyzer/runnables"
 
     # Progress notifications
     PROGRESS = "$/progress"
