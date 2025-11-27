@@ -32,13 +32,13 @@ from .tools import (
     expand_macro,
     format_document,
     format_range,
-    hover,
     implementation,
     members,
     references,
     related_tests,
     rename,
     runnables,
+    symbol_info,
     type_definition,
     workspace_symbols,
 )
@@ -158,10 +158,14 @@ Start with these tools for navigation:
 - definition/type_definition: Jump to where something is defined
 
 For understanding code:
-- hover: Get type info and docs at a position
-- members: Get methods/fields available on an expression
+- symbol_info: Get full type signature and docs at a position
+- members: Get fields/methods available on a type (returns symbol_info_args for each)
 - references: Find all usages of a symbol
 - implementation: Find trait implementations
+
+Typical workflow for exploring a type:
+1. Call members(file, line, char) to get all fields and methods
+2. For any member of interest, call symbol_info with its symbol_info_args
 
 For modifications:
 - diagnostics: Check for errors before/after changes
@@ -169,14 +173,14 @@ For modifications:
 - rename: Safely rename symbols across the project
 
 Paginated tools (completion, references, document_symbols, workspace_symbols,
-diagnostics) return max 20 items by default. Use limit/offset and check
+diagnostics, members) return max 20 items by default. Use limit/offset and check
 hasMore for additional results.
 """,
 )
 
 
 # Register all tools with the MCP server
-mcp.tool(hover)
+mcp.tool(symbol_info)
 mcp.tool(completion)
 mcp.tool(members)
 mcp.tool(definition)

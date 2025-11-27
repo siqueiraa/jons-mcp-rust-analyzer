@@ -14,7 +14,12 @@ async def format_document(
     insert_spaces: bool = True,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Format entire file. Returns list of text edits."""
+    """Format entire file using rustfmt.
+
+    Returns array of TextEdit objects: {range, newText}.
+    Apply these edits to the file to format it.
+    Uses rustfmt with the project's rustfmt.toml configuration if present.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -44,7 +49,12 @@ async def format_range(
     insert_spaces: bool = True,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Format range in file (0-indexed). Returns list of text edits."""
+    """Format a specific range in a file (0-indexed).
+
+    Returns array of TextEdit objects: {range, newText}.
+    Apply these edits to format the selected range.
+    Note: rustfmt may expand the range to include complete items.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()

@@ -12,17 +12,17 @@ from .language import (
     completion,
     definition,
     document_symbols,
-    hover,
     implementation,
     members,
     references,
+    symbol_info,
     type_definition,
     workspace_symbols,
 )
 
 __all__ = [
     # Language features
-    "hover",
+    "symbol_info",
     "completion",
     "members",
     "definition",

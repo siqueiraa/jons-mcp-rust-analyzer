@@ -208,6 +208,9 @@ class RustAnalyzerClient:
                     "cargo": {"features": "all"},
                     "procMacro": {"enable": True},
                     "checkOnSave": {"enable": True, "command": "clippy"},
+                    "completion": {
+                        "fullFunctionSignatures": {"enable": True},
+                    },
                 },
             },
         )

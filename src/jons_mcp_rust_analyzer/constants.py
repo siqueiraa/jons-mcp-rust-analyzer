@@ -16,6 +16,7 @@ HEADER_SEPARATOR: bytes = b"\r\n\r\n"
 DEFAULT_PAGINATION_LIMIT: int = 20
 DEFAULT_PAGINATION_OFFSET: int = 0
 
+
 # LSP Method names
 class LSPMethods:
     """LSP method name constants."""

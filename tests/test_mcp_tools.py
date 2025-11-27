@@ -45,9 +45,7 @@ class TestHelperFunctions:
         # Clear global client
         server_module.rust_analyzer = None
 
-        with pytest.raises(
-            RustAnalyzerNotInitializedError, match="rust-analyzer"
-        ):
+        with pytest.raises(RustAnalyzerNotInitializedError, match="rust-analyzer"):
             server_module.ensure_rust_analyzer()
 
     def test_ensure_rust_analyzer_initialized(self) -> None:
@@ -65,10 +63,11 @@ class TestHelperFunctions:
 class TestLanguageFeatureTools:
     """Test core language feature MCP tools."""
 
-    async def test_hover_tool(self) -> None:
-        """Test hover tool."""
+    async def test_symbol_info_tool(self) -> None:
+        """Test symbol_info tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value={
                 "contents": {"kind": "markdown", "value": "```rust\nfn test()\n```"}
@@ -77,7 +76,7 @@ class TestLanguageFeatureTools:
 
         with patch.object(server_module, "rust_analyzer", mock_client):
             ctx = AsyncMock()
-            result = await tools.hover("src/main.rs", 10, 5, ctx)
+            result = await tools.symbol_info("src/main.rs", 10, 5, ctx)
 
         assert "contents" in result
         # Check that the request was made with an absolute path
@@ -91,6 +90,7 @@ class TestLanguageFeatureTools:
         """Test completion tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {"label": "println!", "kind": 15, "documentation": "Large docs"},
@@ -128,6 +128,7 @@ class TestLanguageFeatureTools:
         """Test completion tool with CompletionList response."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         # Simulate a large completion list that would be limited
         items = [
             {"label": f"test_{i}", "kind": 6, "documentation": f"Docs for test_{i}"}
@@ -187,6 +188,7 @@ class TestLanguageFeatureTools:
         """Test definition tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value={
                 "uri": "file:///src/lib.rs",
@@ -207,6 +209,7 @@ class TestLanguageFeatureTools:
         """Test references tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {
@@ -250,6 +253,7 @@ class TestLanguageFeatureTools:
         """Test document symbols tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {
@@ -279,6 +283,7 @@ class TestLanguageFeatureTools:
         """Test workspace symbols tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {
@@ -302,6 +307,309 @@ class TestLanguageFeatureTools:
         assert result["items"][0]["offset"] == 0
         assert result["totalItems"] == 1
         assert not result["hasMore"]
+
+    async def test_members_tool(self, tmp_path: Path) -> None:
+        """Test members tool with hybrid approach (fields via document_symbols, methods via completion)."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("let calc = Calculator::new();\n")
+
+        type_uri = "file:///src/lib.rs"
+
+        # Track request calls to return different responses
+        request_responses = [
+            # 1. type_definition response
+            {
+                "uri": type_uri,
+                "range": {
+                    "start": {"line": 10, "character": 0},
+                    "end": {"line": 20, "character": 1},
+                },
+            },
+            # 2. document_symbols for type file (get struct and its fields)
+            [
+                {
+                    "name": "Calculator",
+                    "kind": 23,  # Struct
+                    "range": {
+                        "start": {"line": 10, "character": 0},
+                        "end": {"line": 15, "character": 1},
+                    },
+                    "selectionRange": {"start": {"line": 10, "character": 7}},
+                    "children": [
+                        {
+                            "name": "value",
+                            "kind": 8,  # Field
+                            "range": {"start": {"line": 11, "character": 4}},
+                            "selectionRange": {"start": {"line": 11, "character": 4}},
+                        },
+                    ],
+                },
+            ],
+            # 3. hover for "value" field
+            {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "```rust\nvalue: i32\n```",
+                },
+            },
+            # 4. completion response (methods via dot completion)
+            [
+                {
+                    "label": "add",
+                    "kind": 2,
+                    "detail": "fn(&mut self, n: i32)",
+                },  # Method
+                {"label": "new", "kind": 3, "detail": "fn() -> Calculator"},  # Function
+                {
+                    "label": "value",
+                    "kind": 5,
+                    "detail": "i32",
+                },  # Field (should be filtered out)
+            ],
+            # 5. completionItem/resolve for "add"
+            {
+                "label": "add",
+                "kind": 2,
+                "detail": "fn(&mut self, n: i32)",
+            },
+            # 6. completionItem/resolve for "new"
+            {
+                "label": "new",
+                "kind": 3,
+                "detail": "fn() -> Calculator",
+            },
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            ctx = AsyncMock()
+            result = await tools.members(str(test_file), 0, 5, ctx=ctx)
+
+        assert isinstance(result, dict)
+        assert result["typeName"] == "Calculator"
+        assert result["typeKind"] == "struct"
+        assert len(result["fields"]) == 1
+        assert result["fields"][0]["name"] == "value"
+        assert result["fields"][0]["detail"] == "i32"
+
+        # Methods from completion (only kind 2=Method and 3=Function)
+        assert len(result["methods"]) == 2
+        # Methods should be sorted by name (inherent first, then by name)
+        assert result["methods"][0]["name"] == "add"
+        assert result["methods"][0]["detail"] == "fn(&mut self, n: i32)"
+        assert result["methods"][0]["trait"] is None
+        assert result["methods"][0]["needsImport"] is False
+        # No documentation by default
+        assert "documentation" not in result["methods"][0]
+        assert result["methods"][1]["name"] == "new"
+        assert result["methods"][1]["detail"] == "fn() -> Calculator"
+
+        # Check pagination metadata
+        assert result["totalFields"] == 1
+        assert result["totalMethods"] == 2
+        assert not result["hasMore"]
+
+    async def test_members_tool_with_traits(self, tmp_path: Path) -> None:
+        """Test members tool includes trait implementations via completion."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("let my_struct = MyStruct {};\n")
+
+        type_uri = "file:///src/lib.rs"
+        request_responses = [
+            # 1. type_definition response
+            {"uri": type_uri, "range": {"start": {"line": 5, "character": 0}}},
+            # 2. document_symbols for type file
+            [
+                {
+                    "name": "MyStruct",
+                    "kind": 23,
+                    "range": {"start": {"line": 5, "character": 0}},
+                    "selectionRange": {"start": {"line": 5, "character": 7}},
+                    "children": [],
+                },
+            ],
+            # 3. completion response with trait methods
+            [
+                {
+                    "label": "do_thing",
+                    "kind": 2,
+                    "detail": "fn(&self)",
+                },  # Inherent method
+                {
+                    "label": "clone (as Clone)",
+                    "kind": 2,
+                    "detail": "fn(&self) -> Self",
+                },  # Trait method, imported
+                {
+                    "label": "some_method (use some_crate::SomeTrait)",
+                    "kind": 2,
+                    "detail": "fn(&self)",
+                },  # Trait method, needs import
+            ],
+            # 4-6. completionItem/resolve for each method
+            {"label": "do_thing", "kind": 2, "detail": "fn(&self)"},
+            {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
+            {"label": "some_method (use some_crate::SomeTrait)", "kind": 2, "detail": "fn(&self)"},
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            result = await tools.members(str(test_file), 0, 5)
+
+        # Should have 3 methods
+        assert len(result["methods"]) == 3
+
+        # Inherent methods should come first (sorted by trait=None first)
+        assert result["methods"][0]["trait"] is None
+        assert result["methods"][0]["name"] == "do_thing"
+        assert result["methods"][0]["detail"] == "fn(&self)"
+        assert result["methods"][0]["needsImport"] is False
+        # No documentation key when include_documentation=False
+        assert "documentation" not in result["methods"][0]
+
+        # Then trait methods, sorted by trait name
+        assert result["methods"][1]["trait"] == "Clone"
+        assert result["methods"][1]["name"] == "clone"
+        assert result["methods"][1]["detail"] == "fn(&self) -> Self"
+        assert result["methods"][1]["needsImport"] is False
+
+        assert result["methods"][2]["trait"] == "SomeTrait"
+        assert result["methods"][2]["name"] == "some_method"
+        assert result["methods"][2]["detail"] == "fn(&self)"
+        assert result["methods"][2]["needsImport"] is True
+
+    async def test_members_tool_no_type_found(self) -> None:
+        """Test members tool when no type is at position."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.request = AsyncMock(return_value=None)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            result = await tools.members("src/main.rs", 5, 10)
+
+        assert "error" in result
+        assert "No type definition found" in result["error"]
+
+    async def test_members_tool_with_location_link(self, tmp_path: Path) -> None:
+        """Test members tool handles LocationLink format (targetUri instead of uri)."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("let my_struct = MyStruct {};\n")
+
+        type_uri = "file:///src/lib.rs"
+        request_responses = [
+            # 1. type_definition response using LocationLink format
+            {
+                "targetUri": type_uri,
+                "targetRange": {
+                    "start": {"line": 5, "character": 0},
+                    "end": {"line": 10, "character": 1},
+                },
+                "targetSelectionRange": {"start": {"line": 5, "character": 7}},
+            },
+            # 2. document_symbols for type file
+            [
+                {
+                    "name": "MyStruct",
+                    "kind": 23,
+                    "range": {"start": {"line": 5, "character": 0}},
+                    "selectionRange": {"start": {"line": 5, "character": 7}},
+                    "children": [],
+                },
+            ],
+            # 3. completion response
+            [
+                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+            ],
+            # 4. completionItem/resolve for "new"
+            {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            result = await tools.members(str(test_file), 0, 5)
+
+        assert result["typeName"] == "MyStruct"
+        assert len(result["methods"]) == 1
+        assert result["methods"][0]["name"] == "new"
+        assert result["methods"][0]["detail"] == "fn() -> MyStruct"
+        assert "documentation" not in result["methods"][0]
+
+    async def test_members_tool_with_existing_dot(self, tmp_path: Path) -> None:
+        """Test members tool when cursor is on variable with existing dot."""
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
+        mock_client.notify = AsyncMock()
+
+        # Create a temp file with Rust code that has a dot already
+        test_file = tmp_path / "src" / "main.rs"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("my_struct.clone();\n")
+
+        type_uri = "file:///src/lib.rs"
+        request_responses = [
+            # 1. type_definition response
+            {"uri": type_uri, "range": {"start": {"line": 5, "character": 0}}},
+            # 2. document_symbols for type file
+            [
+                {
+                    "name": "MyStruct",
+                    "kind": 23,
+                    "range": {"start": {"line": 5, "character": 0}},
+                    "selectionRange": {"start": {"line": 5, "character": 7}},
+                    "children": [],
+                },
+            ],
+            # 3. completion response
+            [
+                {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
+                {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+            ],
+            # 4-5. completionItem/resolve for each method
+            {"label": "clone (as Clone)", "kind": 2, "detail": "fn(&self) -> Self"},
+            {"label": "new", "kind": 3, "detail": "fn() -> MyStruct"},
+        ]
+        mock_client.request = AsyncMock(side_effect=request_responses)
+
+        with patch.object(server_module, "rust_analyzer", mock_client):
+            # Cursor on "my_struct" (position 0-8), dot is at position 9
+            result = await tools.members(str(test_file), 0, 3)
+
+        assert result["typeName"] == "MyStruct"
+        # Should have found methods via completion
+        assert len(result["methods"]) == 2
+        # Methods sorted: inherent first (new), then trait (clone)
+        assert result["methods"][0]["name"] == "new"
+        assert result["methods"][0]["trait"] is None
+        assert result["methods"][0]["detail"] == "fn() -> MyStruct"
+        assert "documentation" not in result["methods"][0]
+        assert result["methods"][1]["name"] == "clone"
+        assert result["methods"][1]["trait"] == "Clone"
+        assert result["methods"][1]["detail"] == "fn(&self) -> Self"
+        # notify NOT called when dot already exists (no document modification needed)
+        mock_client.notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -371,9 +679,14 @@ class TestCodeIntelligenceTools:
         """Test code actions tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
-                {"title": "Import `std::io`", "kind": "quickfix", "edit": {"changes": {}}}
+                {
+                    "title": "Import `std::io`",
+                    "kind": "quickfix",
+                    "edit": {"changes": {}},
+                }
             ]
         )
 
@@ -391,6 +704,7 @@ class TestCodeIntelligenceTools:
         """Test rename tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
 
         # Mock prepare rename
         mock_client.request = AsyncMock()
@@ -410,6 +724,7 @@ class TestCodeIntelligenceTools:
         """Test rename tool at invalid position."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(side_effect=LSPRequestError("Cannot rename"))
 
         with patch.object(server_module, "rust_analyzer", mock_client):
@@ -427,6 +742,7 @@ class TestFormattingTools:
         """Test format document tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {
@@ -452,6 +768,7 @@ class TestFormattingTools:
         """Test format range tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(return_value=[])
 
         with patch.object(server_module, "rust_analyzer", mock_client):
@@ -470,6 +787,7 @@ class TestRustAnalyzerExtensions:
         """Test expand macro tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value={"name": "println", "expansion": 'std::io::println("Hello")'}
         )
@@ -484,6 +802,7 @@ class TestRustAnalyzerExtensions:
         """Test analyzer status tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(return_value="Analyzer: ready\nMemory: 100MB")
         mock_client.get_progress_status.return_value = {
             "busy": False,
@@ -503,6 +822,7 @@ class TestRustAnalyzerExtensions:
         """Test related tests tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {
@@ -522,6 +842,7 @@ class TestRustAnalyzerExtensions:
         """Test runnables tool."""
         mock_client = MagicMock()
         mock_client.is_initialized.return_value = True
+        mock_client.is_ready.return_value = True
         mock_client.request = AsyncMock(
             return_value=[
                 {

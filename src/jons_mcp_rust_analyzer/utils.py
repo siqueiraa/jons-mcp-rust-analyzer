@@ -90,20 +90,68 @@ def completion_sort_key(item: dict[str, Any]) -> tuple[str, str]:
     return (sort_text, label)
 
 
-def members_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
-    """Sort key for members (fields first, then methods, then others).
+def members_method_sort_key(method: dict[str, Any]) -> tuple[int, str, str]:
+    """Sort key for members methods: inherent first, then by trait, then by name."""
+    trait = method.get("trait")
+    is_inherent = 0 if trait is None else 1
+    return (is_inherent, trait or "", method.get("name", ""))
 
-    LSP CompletionItemKind values:
-    - 5 = Field
-    - 2 = Method
-    - 3 = Function
+
+def parse_impl_name(name: str) -> tuple[str | None, str]:
+    """Parse 'impl Trait for Type' or 'impl Type' patterns.
+
+    Args:
+        name: The impl block name from document_symbols (e.g., "impl Clone for MyStruct")
+
+    Returns:
+        Tuple of (trait_name or None, type_name)
     """
-    kind = item.get("kind", 999)
-    # Priority: Fields (5) first, then Methods (2), then Functions (3), then others
-    kind_priority = {5: 0, 2: 1, 3: 2}.get(kind, 3)
-    sort_text = item.get("sortText", item.get("label", ""))
-    label = item.get("label", "")
-    return (kind_priority, sort_text, label)
+    import re
+
+    # Match "impl TraitName for TypeName"
+    trait_match = re.match(r"impl(?:<[^>]+>)?\s+(\w+(?:::\w+)*)\s+for\s+(.+)", name)
+    if trait_match:
+        return (trait_match.group(1), trait_match.group(2).strip())
+
+    # Match "impl TypeName" (inherent impl)
+    inherent_match = re.match(r"impl(?:<[^>]+>)?\s+(.+)", name)
+    if inherent_match:
+        return (None, inherent_match.group(1).strip())
+
+    return (None, name)
+
+
+def parse_method_label(label: str) -> tuple[str, str | None, bool]:
+    """Parse completion label to extract method name, trait, and import status.
+
+    rust-analyzer completion labels use these formats:
+    - "method_name"                    -> inherent method, no trait
+    - "method_name (as TraitName)"     -> trait method, already imported
+    - "method_name (use path::Trait)"  -> trait method, needs import
+
+    Args:
+        label: The completion item label from rust-analyzer
+
+    Returns:
+        Tuple of (method_name, trait_name or None, needs_import)
+    """
+    import re
+
+    # Match "method (as Trait)" - trait already in scope
+    as_match = re.match(r"^(\w+)\s*\(as\s+(.+)\)$", label)
+    if as_match:
+        return (as_match.group(1), as_match.group(2), False)
+
+    # Match "method (use path::Trait)" - trait needs import
+    use_match = re.match(r"^(\w+)\s*\(use\s+(.+)\)$", label)
+    if use_match:
+        # Extract just the trait name from the path
+        path = use_match.group(2)
+        trait_name = path.split("::")[-1] if "::" in path else path
+        return (use_match.group(1), trait_name, True)
+
+    # Plain method name - inherent impl
+    return (label, None, False)
 
 
 def location_sort_key(item: dict[str, Any]) -> tuple[str, int, int]:
@@ -179,6 +227,8 @@ def flatten_document_symbols(
 
         # Recursively flatten children
         if "children" in symbol:
-            flat.extend(flatten_document_symbols(symbol["children"], symbol["fullName"]))
+            flat.extend(
+                flatten_document_symbols(symbol["children"], symbol["fullName"])
+            )
 
     return flat

@@ -15,7 +15,17 @@ async def diagnostics(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get errors/warnings. If file_path is None, returns all diagnostics. Paginated: use limit/offset, check hasMore for more results."""
+    """Get compiler errors and warnings.
+
+    Returns {items, totalItems, hasMore, nextOffset} where each item has:
+    - uri: File containing the diagnostic
+    - range: Location in file
+    - severity: 1=Error, 2=Warning, 3=Info, 4=Hint
+    - message: Description of the issue
+
+    If file_path is omitted, returns diagnostics for all open files.
+    Paginated: use limit/offset, check hasMore for more results.
+    """
     from ..server import current_diagnostics
 
     if ctx:
@@ -51,7 +61,16 @@ async def code_actions(
     end_char: int,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Get available fixes/refactorings for a range (0-indexed)."""
+    """Get available quick fixes and refactorings for a range (0-indexed).
+
+    Returns array of actions, each with:
+    - title: Description of the action
+    - kind: Category (quickfix, refactor, refactor.extract, etc.)
+    - edit: WorkspaceEdit to apply (if action is immediate)
+    - command: Command to execute (if action requires server-side processing)
+
+    Common actions: fix imports, extract function, inline variable, add derive, etc.
+    """
     from ..server import current_diagnostics, ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -84,7 +103,12 @@ async def rename(
     new_name: str,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Rename symbol at position across the project."""
+    """Rename symbol at position (0-indexed) across the entire project.
+
+    Returns WorkspaceEdit with {changes: {uri: [TextEdit]}} or {documentChanges: [...]}.
+    All references to the symbol across all files will be updated.
+    Returns {error} if rename is not possible at this position.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()

@@ -1,5 +1,6 @@
 """Core language feature tools."""
 
+from pathlib import Path
 from typing import Any
 
 from fastmcp import Context
@@ -11,26 +12,31 @@ from ..utils import (
     ensure_file_uri,
     flatten_document_symbols,
     location_sort_key,
-    members_sort_key,
+    members_method_sort_key,
+    parse_method_label,
     symbol_sort_key,
     workspace_symbol_sort_key,
 )
 
 
-async def hover(
+async def symbol_info(
     file_path: str,
     line: int,
     character: int,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get type info and docs at position. Lines/chars are 0-indexed."""
+    """Get type signature and documentation for symbol at position (0-indexed).
+
+    Returns {contents} with markdown-formatted type info and docs.
+    Use this to get full details for any symbol, field, or method.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
     if ctx:
-        await ctx.info(f"Getting hover info at {file_path}:{line}:{character}")
+        await ctx.info(f"Getting symbol info at {file_path}:{line}:{character}")
 
     response = await client.request(
         LSPMethods.HOVER,
@@ -56,7 +62,16 @@ async def completion(
     include_documentation: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get completions at position. Paginated: use limit/offset, check hasMore for more results."""
+    """Get code completions at position (0-indexed).
+
+    Returns {items, totalItems, hasMore, nextOffset} where each item has:
+    - label: Completion text
+    - kind: Completion type (1=Text, 2=Method, 3=Function, 5=Field, 6=Variable, etc.)
+    - detail: Type signature (if include_detail=true)
+    - documentation: Doc comments (if include_documentation=true)
+
+    Paginated: use limit/offset, check hasMore for more results.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -129,7 +144,11 @@ async def definition(
     character: int,
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Go to definition of symbol at position."""
+    """Go to definition of symbol at position (0-indexed).
+
+    Returns location(s) where the symbol is defined: {uri, range}.
+    Use this to jump from a variable/function usage to its declaration.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -155,7 +174,11 @@ async def type_definition(
     character: int,
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Go to type definition of symbol at position."""
+    """Go to type definition of symbol at position (0-indexed).
+
+    Returns location(s) where the type is defined: {uri, range}.
+    Use this to find the struct/enum/trait definition for a variable's type.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -181,7 +204,11 @@ async def implementation(
     character: int,
     ctx: Context | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Find implementations of trait/type at position."""
+    """Find implementations of trait or type at position (0-indexed).
+
+    Returns location(s) of impl blocks: {uri, range}.
+    Call on a trait to find all types implementing it, or on a type to find its impl blocks.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -210,7 +237,12 @@ async def references(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Find all references to symbol. Paginated: use limit/offset, check hasMore for more results."""
+    """Find all references to symbol at position (0-indexed).
+
+    Returns {items, totalItems, hasMore, nextOffset} where each item has {uri, range}.
+    Set include_declaration=false to exclude the definition itself.
+    Paginated: use limit/offset, check hasMore for more results.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -244,7 +276,15 @@ async def document_symbols(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get all symbols in file (functions, structs, etc.). Paginated: use limit/offset, check hasMore for more results."""
+    """Get all symbols defined in a file (functions, structs, enums, etc.).
+
+    Returns {items, totalItems, hasMore, nextOffset} where each item has:
+    - name, fullName: Symbol name (fullName includes parent context like "MyStruct::method")
+    - kind: Symbol type (5=Class, 6=Method, 8=Field, 12=Function, 23=Struct, etc.)
+    - range: Location in file
+
+    Paginated: use limit/offset, check hasMore for more results.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -294,7 +334,16 @@ async def workspace_symbols(
     offset: int = DEFAULT_PAGINATION_OFFSET,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Search symbols across workspace. Query can be partial name. Paginated: use limit/offset, check hasMore for more results."""
+    """Search for symbols across the entire workspace by name.
+
+    Returns {items, totalItems, hasMore, nextOffset} where each item has:
+    - name: Symbol name
+    - kind: Symbol type (5=Class, 12=Function, 23=Struct, etc.)
+    - location: {uri, range} where the symbol is defined
+
+    Query can be a partial name (e.g., "MyStr" matches "MyStruct").
+    Paginated: use limit/offset, check hasMore for more results.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -316,25 +365,194 @@ async def workspace_symbols(
     return {"items": paginated_items, **metadata}
 
 
+def _build_symbol_info_args(uri: str, symbol: dict[str, Any]) -> dict[str, Any]:
+    """Build args dict for calling symbol_info on this symbol."""
+    # Convert file:// URI to path
+    file_path = uri.replace("file://", "")
+    start = symbol.get("selectionRange", symbol.get("range", {})).get("start", {})
+    return {
+        "file_path": file_path,
+        "line": start.get("line", 0),
+        "character": start.get("character", 0),
+    }
+
+
+async def _get_methods_via_completion(
+    client: Any,
+    file_uri: str,
+    file_path: str,
+    line: int,
+    character: int,
+    include_documentation: bool = False,
+) -> list[dict[str, Any]]:
+    """Get available methods using completion after a dot.
+
+    The cursor can be anywhere in a variable name. This function:
+    1. Finds the end of the current token (variable name)
+    2. Checks if there's already a dot after it
+    3. If no dot, inserts one temporarily using didChange
+    4. Calls completion at the position after the dot
+    5. Uses completionItem/resolve to get method signatures (detail field)
+    6. Restores the original content if modified
+
+    Args:
+        include_documentation: If True, include doc comments for each method
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Read file content to find token boundaries
+    content = Path(file_path).read_text()
+    lines_list = content.splitlines()
+    current_line = lines_list[line] if line < len(lines_list) else ""
+
+    # Find end of current token (variable name)
+    # Token ends at first non-identifier character
+    token_end = character
+    while token_end < len(current_line) and (
+        current_line[token_end].isalnum() or current_line[token_end] == "_"
+    ):
+        token_end += 1
+
+    # Check if there's already a dot after the token
+    has_dot = token_end < len(current_line) and current_line[token_end] == "."
+
+    # Track document version - start at 2 (1 was didOpen)
+    doc_version = 2
+
+    if has_dot:
+        # Dot already exists, complete at position after dot
+        dot_position = token_end + 1
+        logger.info(f"members: dot already exists, completing at {line}:{dot_position}")
+        response = await client.request(
+            LSPMethods.COMPLETION,
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": dot_position},
+            },
+        )
+    else:
+        # Need to insert a dot - use didChange to modify document temporarily
+        # Insert "." after the token
+        modified_line = current_line[:token_end] + "." + current_line[token_end:]
+        modified_lines = lines_list.copy()
+        modified_lines[line] = modified_line
+
+        logger.info(
+            f"members: inserting dot at {line}:{token_end}, completing at {line}:{token_end + 1}"
+        )
+
+        # Send didChange with the modified content
+        await client.notify(
+            "textDocument/didChange",
+            {
+                "textDocument": {"uri": file_uri, "version": doc_version},
+                "contentChanges": [{"text": "\n".join(modified_lines)}],
+            },
+        )
+        doc_version += 1
+
+        # Complete at position after the inserted dot
+        response = await client.request(
+            LSPMethods.COMPLETION,
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": token_end + 1},
+            },
+        )
+
+    # Filter to method-like items
+    # CompletionItemKind: 2=Method, 3=Function
+    items = (
+        response
+        if isinstance(response, list)
+        else (response.get("items", []) if response else [])
+    )
+    method_items = [item for item in items if item.get("kind") in (2, 3)]
+
+    methods: list[dict[str, Any]] = []
+
+    # Build method list from completion items
+    # We use completionItem/resolve to get the full detail (method signature)
+    # Note: We don't provide symbol_info_args for methods because definition lookup
+    # is unreliable (trait methods go to trait definitions in external crates)
+    for item in method_items:
+        label = item.get("label", "")
+        name, trait_info, needs_import = parse_method_label(label)
+
+        # Get full detail via completionItem/resolve
+        detail = item.get("detail")
+        documentation = None
+        try:
+            resolved = await client.request("completionItem/resolve", item)
+            if resolved:
+                if detail is None:
+                    detail = resolved.get("detail")
+                # Only extract documentation if requested (can be large)
+                if include_documentation:
+                    doc = resolved.get("documentation")
+                    if doc:
+                        if isinstance(doc, str):
+                            documentation = doc
+                        elif isinstance(doc, dict):
+                            documentation = doc.get("value")
+        except Exception as e:
+            logger.warning(f"Failed to resolve completion item {name}: {e}")
+
+        method_entry: dict[str, Any] = {
+            "name": name,
+            "kind": item.get("kind"),
+            "detail": detail,
+            "trait": trait_info,
+            "needsImport": needs_import,
+        }
+        if include_documentation:
+            method_entry["documentation"] = documentation
+        methods.append(method_entry)
+
+    # Restore original content if we modified it
+    if not has_dot:
+        await client.notify(
+            "textDocument/didChange",
+            {
+                "textDocument": {"uri": file_uri, "version": doc_version},
+                "contentChanges": [{"text": content}],
+            },
+        )
+
+    return methods
+
+
 async def members(
     file_path: str,
     line: int,
     character: int,
     limit: int = DEFAULT_PAGINATION_LIMIT,
     offset: int = DEFAULT_PAGINATION_OFFSET,
-    include_detail: bool = True,
     include_documentation: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Get methods/fields available on the type at position.
+    """Get fields and methods available on the type at position.
 
-    Returns the members (methods, fields) that can be accessed on the expression
-    at the given position. The position can be anywhere on an identifier - the tool
-    will find the end of it. Paginated: use limit/offset, check hasMore.
+    Call this on a variable to discover all fields and methods you can access on it.
+
+    Response includes:
+    - typeName, typeKind: The type's name and kind (struct, enum, etc.)
+    - fields: Array of {name, kind, detail}
+      - detail: Field type (e.g., "i32", "Vec<String>")
+    - methods: Array of {name, kind, detail, trait, needsImport}
+      - detail: Method signature with parameter names (e.g., "fn(&self, count: i32) -> bool")
+      - trait: Which trait this method comes from, or null for inherent methods
+      - needsImport: Whether the trait needs to be imported to use this method
+      - documentation: (only if include_documentation=True) Doc comments
+
+    Args:
+        include_documentation: If True, include doc comments for methods (default False)
+
+    Paginated: use limit/offset for methods, check hasMore for more results.
     """
-    import asyncio
     import logging
-    from pathlib import Path
 
     from ..server import ensure_rust_analyzer_indexed
 
@@ -343,179 +561,213 @@ async def members(
     client = await ensure_rust_analyzer_indexed()
     file_uri = ensure_file_uri(file_path)
 
+    # Resolve the file path for reading
+    resolved_path = file_path
+    if not Path(file_path).is_absolute():
+        resolved_path = str(Path.cwd() / file_path)
+
     if ctx:
         await ctx.info(
             f"Getting members at {file_path}:{line}:{character} "
             f"(limit: {limit}, offset: {offset})"
         )
 
-    # Read the actual file content
-    resolved_path = Path(file_path)
-    if not resolved_path.is_absolute():
-        resolved_path = Path.cwd() / file_path
+    # Step 1: Get type definition location
+    type_def_response = await client.request(
+        LSPMethods.TYPE_DEFINITION,
+        {
+            "textDocument": {"uri": file_uri},
+            "position": {"line": line, "character": character},
+        },
+    )
 
-    original_content = resolved_path.read_text()
-    file_lines = original_content.splitlines(keepends=True)
+    if not type_def_response:
+        return {"error": "No type definition found at position"}
 
-    # Handle case where file doesn't end with newline
-    if original_content and not original_content.endswith('\n'):
-        if file_lines:
-            file_lines[-1] = file_lines[-1] + '\n'
-
-    # Find the end of the identifier at the given position and insert '.' there
-    completion_char = character + 1  # Default: right after given position
-    original_line = ""
-    modified_line = ""
-
-    if line < len(file_lines):
-        current_line = file_lines[line]
-        original_line = current_line.rstrip('\n')
-        line_content = original_line
-
-        # Start at the given character position
-        char_pos = min(character, len(line_content))
-
-        # Scan right to find the end of the identifier
-        end_pos = char_pos
-        while end_pos < len(line_content) and (
-            line_content[end_pos].isalnum() or line_content[end_pos] == '_'
-        ):
-            end_pos += 1
-
-        # Check if there's already a '.' right after the identifier
-        already_has_dot = end_pos < len(line_content) and line_content[end_pos] == '.'
-
-        if already_has_dot:
-            # Already has a dot - use original file, request completion after the dot
-            completion_char = end_pos + 1
-            modified_line = line_content
-            modified_content = original_content  # Use original file as-is
-            logger.info(f"members: found existing dot at position {end_pos}, using original file")
-        else:
-            # Insert dot at end of identifier, truncate rest of line to keep it clean
-            modified_line = line_content[:end_pos] + '.'
-            file_lines[line] = modified_line + '\n'
-            completion_char = end_pos + 1
-            modified_content = ''.join(file_lines)
-            already_has_dot = False
+    # Handle single location or array of locations
+    if isinstance(type_def_response, list):
+        type_location = type_def_response[0] if type_def_response else None
     else:
-        # Line doesn't exist, append lines as needed
-        while len(file_lines) <= line:
-            file_lines.append('\n')
-        file_lines[line] = '.\n'
-        modified_line = '.'
-        modified_content = ''.join(file_lines)
-        already_has_dot = False
+        type_location = type_def_response
 
-    # Debug logging
-    logger.info(f"members: file_uri={file_uri}")
-    logger.info(f"members: line={line}, char={character}, completion_char={completion_char}")
-    logger.info(f"members: original_line={original_line!r}")
-    logger.info(f"members: modified_line={modified_line!r}")
-    logger.info(f"members: already_has_dot={already_has_dot}")
+    if not type_location:
+        return {"error": "No type definition found at position"}
 
-    if already_has_dot:
-        # File already has the dot - just request completion directly
-        # rust-analyzer already has this file indexed
-        logger.info("members: requesting completion directly (no didOpen needed)")
-        response = await client.request(
-            LSPMethods.COMPLETION,
-            {
-                "textDocument": {"uri": file_uri},
-                "position": {"line": line, "character": completion_char},
-            },
-        )
-        logger.info(f"members: got response type={type(response)}, "
-                    f"items={len(response.get('items', [])) if isinstance(response, dict) else len(response) if isinstance(response, list) else 'N/A'}")
-    else:
-        # Need to open with modified content
-        # Use the REAL file URI - didOpen makes rust-analyzer use our modified content
-        # while keeping full project context (imports, dependencies, type resolution)
+    # Handle both Location (uri, range) and LocationLink (targetUri, targetRange) formats
+    type_uri = type_location.get("uri") or type_location.get("targetUri") or ""
+    type_range = type_location.get("range") or type_location.get("targetRange") or {}
+    type_start = type_range.get("start", {})
+    type_line = type_start.get("line", 0)
+
+    if not type_uri:
+        return {"error": "No type definition found at position (empty URI)"}
+
+    logger.info(f"members: type definition at {type_uri}:{type_line}")
+
+    # Step 2: Open the type definition file if it's a local file
+    # This is needed for hover to work on fields
+    type_file_path = type_uri.replace("file://", "")
+    type_file_content = None
+    if Path(type_file_path).exists():
         try:
-            logger.info("members: sending didOpen with modified content")
+            type_file_content = Path(type_file_path).read_text()
             await client.notify(
                 LSPMethods.DID_OPEN,
                 {
                     "textDocument": {
-                        "uri": file_uri,
+                        "uri": type_uri,
                         "languageId": "rust",
                         "version": 1,
-                        "text": modified_content,
+                        "text": type_file_content,
                     }
                 },
             )
+        except Exception as e:
+            logger.warning(f"Failed to open type file {type_uri}: {e}")
 
-            # Give rust-analyzer time to process the document
-            await asyncio.sleep(0.1)
+    # Step 3: Get document symbols for the type definition file to find fields
+    type_symbols_response = await client.request(
+        LSPMethods.DOCUMENT_SYMBOL,
+        {"textDocument": {"uri": type_uri}},
+    )
 
-            logger.info(f"members: requesting completion at line={line}, char={completion_char}")
-            response = await client.request(
-                LSPMethods.COMPLETION,
+    type_symbols = type_symbols_response or []
+
+    # Find the type symbol at the definition location
+    type_name = "unknown"
+    type_kind = "unknown"
+    field_symbols: list[dict[str, Any]] = []
+
+    for symbol in type_symbols:
+        symbol_range = symbol.get("range", {})
+        symbol_start = symbol_range.get("start", {})
+        if symbol_start.get("line") == type_line:
+            type_name = symbol.get("name", "unknown")
+            # LSP SymbolKind: 5=Class, 23=Struct, 10=Enum, 11=Interface
+            kind_num = symbol.get("kind", 0)
+            kind_map = {5: "class", 23: "struct", 10: "enum", 11: "interface"}
+            type_kind = kind_map.get(kind_num, "unknown")
+
+            # Extract fields from children
+            for child in symbol.get("children", []):
+                child_kind = child.get("kind", 0)
+                # LSP SymbolKind: 8=Field
+                if child_kind == 8:
+                    field_symbols.append(child)
+            break
+
+    # Step 3: Get field types via hover
+    fields: list[dict[str, Any]] = []
+    for field_symbol in field_symbols:
+        field_name = field_symbol.get("name", "")
+        field_kind = field_symbol.get("kind", 0)
+
+        # Get field type via hover at the field's selection range
+        field_detail = None
+        selection_range = field_symbol.get("selectionRange", {})
+        field_start = selection_range.get("start", {})
+        field_line = field_start.get("line", 0)
+        field_char = field_start.get("character", 0)
+
+        try:
+            hover_response = await client.request(
+                LSPMethods.HOVER,
                 {
-                    "textDocument": {"uri": file_uri},
-                    "position": {"line": line, "character": completion_char},
+                    "textDocument": {"uri": type_uri},
+                    "position": {"line": field_line, "character": field_char},
                 },
             )
-            logger.info(f"members: got response type={type(response)}, "
-                        f"items={len(response.get('items', [])) if isinstance(response, dict) else len(response) if isinstance(response, list) else 'N/A'}")
-        finally:
-            # Close the document - rust-analyzer reverts to disk content
-            logger.info("members: sending didClose")
+            if hover_response:
+                contents = hover_response.get("contents", {})
+                logger.debug(f"Hover for field {field_name}: {contents}")
+                # Contents may be string, {kind, value}, or array
+                if isinstance(contents, list):
+                    # Take first element if array
+                    contents = contents[0] if contents else {}
+                # Extract type from hover - may be string or {kind, value}
+                if isinstance(contents, str):
+                    # Parse type from "field_name: type" format
+                    if ": " in contents:
+                        field_detail = contents.split(": ", 1)[1].strip()
+                    else:
+                        field_detail = contents
+                elif isinstance(contents, dict):
+                    value = contents.get("value", "")
+                    # Hover returns markdown like "```rust\nfield: Type\n```"
+                    # Try multiple parsing strategies
+                    lines = value.split("\n")
+                    for hover_line in lines:
+                        hover_line = hover_line.strip()
+                        # Skip code fence markers
+                        if hover_line.startswith("```"):
+                            continue
+                        # Look for "field_name: Type" pattern
+                        if hover_line.startswith(f"{field_name}:"):
+                            field_detail = hover_line.split(":", 1)[1].strip()
+                            field_detail = field_detail.rstrip(",")
+                            break
+                        # Also try just ": " anywhere in case field name differs
+                        elif ": " in hover_line and not hover_line.startswith("//"):
+                            # Could be "pub field_name: Type" or similar
+                            parts = hover_line.split(": ", 1)
+                            if len(parts) == 2:
+                                field_detail = parts[1].strip().rstrip(",")
+                                break
+        except Exception as e:
+            logger.warning(f"Failed to get hover for field {field_name}: {e}")
+
+        fields.append(
+            {
+                "name": field_name,
+                "kind": field_kind,
+                "detail": field_detail,
+            }
+        )
+
+    logger.info(
+        f"members: found type {type_name} ({type_kind}) with {len(fields)} fields"
+    )
+
+    # Close the type file if we opened it
+    if type_file_content is not None:
+        try:
             await client.notify(
                 LSPMethods.DID_CLOSE,
-                {"textDocument": {"uri": file_uri}},
+                {"textDocument": {"uri": type_uri}},
             )
+        except Exception as e:
+            logger.warning(f"Failed to close type file {type_uri}: {e}")
 
-    # Process results
-    items: list[dict[str, Any]] = []
-    is_incomplete = False
+    # Step 5: Get methods via completion (finds ALL methods including trait impls)
+    methods = await _get_methods_via_completion(
+        client, file_uri, resolved_path, line, character, include_documentation
+    )
 
-    if isinstance(response, list):
-        items = response
-    elif isinstance(response, dict):
-        items = response.get("items", [])
-        is_incomplete = response.get("isIncomplete", False)
+    # Sort methods: inherent first, then by trait, then by name
+    methods.sort(key=members_method_sort_key)
 
-    # Sort with fields first, then methods
-    items.sort(key=members_sort_key)
+    logger.info(f"members: found {len(methods)} methods via completion")
 
-    # Log a sample item to see what fields are available
-    if items:
-        sample = items[0]
-        logger.info(f"members: sample item keys={list(sample.keys())}")
-        logger.info(f"members: sample item={sample}")
+    # Calculate totals
+    total_fields = len(fields)
+    total_methods = len(methods)
 
-    total_items = len(items)
-    start_idx = min(offset, total_items)
-    end_idx = min(start_idx + limit, total_items)
-    paginated_items = items[start_idx:end_idx]
+    # Paginate methods only (fields are typically few and always returned in full)
+    start_idx = min(offset, total_methods)
+    end_idx = min(start_idx + limit, total_methods)
+    paginated_methods = methods[start_idx:end_idx]
 
-    has_more = end_idx < total_items
-
-    processed_items = []
-    for i, item in enumerate(paginated_items):
-        processed_item: dict[str, Any] = {
-            "label": item.get("label", ""),
-            "kind": item.get("kind"),
-            "offset": start_idx + i,
-        }
-
-        if include_detail and "detail" in item:
-            processed_item["detail"] = item["detail"]
-
-        if include_documentation and "documentation" in item:
-            processed_item["documentation"] = item["documentation"]
-
-        processed_items.append(processed_item)
+    has_more = end_idx < total_methods
 
     return {
-        "items": processed_items,
-        "isIncomplete": is_incomplete,
-        "totalItems": total_items,
+        "typeName": type_name,
+        "typeKind": type_kind,
+        "fields": fields,
+        "methods": paginated_methods,
+        "totalFields": total_fields,
+        "totalMethods": total_methods,
         "offset": offset,
         "limit": limit,
         "hasMore": has_more,
         "nextOffset": end_idx if has_more else None,
-        "includeDetail": include_detail,
-        "includeDocumentation": include_documentation,
     }

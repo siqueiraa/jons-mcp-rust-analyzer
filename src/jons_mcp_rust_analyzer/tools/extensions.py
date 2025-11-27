@@ -14,7 +14,12 @@ async def expand_macro(
     character: int,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Expand macro at position. Returns expanded code."""
+    """Expand a Rust macro at position (0-indexed).
+
+    Returns {name, expansion} where expansion is the generated code.
+    Use this to see what code a macro like derive, vec!, println!, etc. produces.
+    Returns {expansion: "No macro found..."} if no macro at position.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -35,7 +40,14 @@ async def expand_macro(
 
 
 async def analyzer_status(ctx: Context | None = None) -> dict[str, Any]:
-    """Get rust-analyzer server status including progress info."""
+    """Get rust-analyzer server status and indexing progress.
+
+    Returns {progress, internalStatus} where:
+    - progress: Current indexing state (idle, indexing, building, etc.)
+    - internalStatus: Detailed internal status string from rust-analyzer
+
+    Use this to check if rust-analyzer is ready or still indexing the project.
+    """
     from ..server import ensure_rust_analyzer
 
     client = ensure_rust_analyzer()
@@ -62,7 +74,11 @@ async def related_tests(
     character: int,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Find tests related to code at position."""
+    """Find tests related to code at position (0-indexed).
+
+    Returns array of test runnables with location and cargo command info.
+    Use this to discover tests that exercise a particular function or module.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
@@ -88,7 +104,16 @@ async def runnables(
     character: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Get runnable targets (tests, bins, examples) in file."""
+    """Get runnable targets in a file (tests, main functions, examples).
+
+    Returns array of runnables, each with:
+    - label: Display name (e.g., "test my_test", "cargo run")
+    - kind: Type of runnable (cargo, shell)
+    - args: Arguments to pass to cargo
+    - location: Where the runnable is defined
+
+    If line/character provided, returns only runnables at that position.
+    """
     from ..server import ensure_rust_analyzer_indexed
 
     client = await ensure_rust_analyzer_indexed()
