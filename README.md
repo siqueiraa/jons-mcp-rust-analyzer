@@ -7,18 +7,16 @@ A FastMCP server that exposes rust-analyzer LSP features through the Model Conte
 Exposes rust-analyzer capabilities as MCP tools:
 
 ### Core Language Features
-- **hover** - Get type information and documentation at any position
-- **completion** - Get code completions with pagination support
+- **symbol_info** - Get type signature and documentation for any symbol at a position
 - **definition** - Jump to definition of symbols
-- **type_definition** - Jump to type definitions
 - **implementation** - Find trait implementations
 - **references** - Find all usages of a symbol (paginated)
 - **document_symbols** - List all symbols in a file (paginated)
 - **workspace_symbols** - Search symbols across the workspace (paginated)
+- **type_info** - Get complete type information including fields and methods for a type
 
 ### Code Intelligence
 - **diagnostics** - Get compiler errors and warnings (paginated)
-- **code_actions** - Get available fixes and refactorings
 - **rename** - Rename symbols across the project
 
 ### Formatting
@@ -27,9 +25,6 @@ Exposes rust-analyzer capabilities as MCP tools:
 
 ### rust-analyzer Extensions
 - **expand_macro** - Expand Rust macros
-- **analyzer_status** - Check analyzer status
-- **related_tests** - Find related tests
-- **runnables** - Find runnable targets (tests, binaries)
 
 ## Requirements
 
