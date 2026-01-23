@@ -237,6 +237,22 @@ def main() -> None:
         nargs="?",
         help="Path to the Rust project (defaults to current directory)",
     )
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="Run as persistent HTTP server instead of stdio",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=9000,
+        help="HTTP port (default: 9000)",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP host (default: 127.0.0.1)",
+    )
     args = parser.parse_args()
 
     # Set project root from CLI argument
@@ -251,7 +267,11 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     # Run the MCP server
-    mcp.run()
+    if args.http:
+        logger.info(f"Starting HTTP server on {args.host}:{args.port}")
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
