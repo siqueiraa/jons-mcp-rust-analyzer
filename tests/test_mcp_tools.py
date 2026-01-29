@@ -860,3 +860,93 @@ class TestNotificationHandlers:
 
         assert "file:///src/main.rs" in server_module.current_diagnostics
         assert len(server_module.current_diagnostics["file:///src/main.rs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_handle_diagnostics_filters_unlinked_file(self) -> None:
+        """Test that unlinked-file diagnostics are filtered out."""
+        server_module.current_diagnostics.clear()
+
+        params = {
+            "uri": "file:///src/main.rs",
+            "diagnostics": [
+                {"severity": 1, "message": "Error", "code": "E0001"},
+                {"severity": 2, "message": "Unlinked file", "code": "unlinked-file"},
+                {"severity": 2, "message": "Warning", "code": "dead_code"},
+            ],
+        }
+
+        await server_module.handle_diagnostics(params)
+
+        diagnostics = server_module.current_diagnostics["file:///src/main.rs"]
+        assert len(diagnostics) == 2
+        codes = [d.get("code") for d in diagnostics]
+        assert "E0001" in codes
+        assert "dead_code" in codes
+        assert "unlinked-file" not in codes
+
+    @pytest.mark.asyncio
+    async def test_handle_diagnostics_handles_none_diagnostics(self) -> None:
+        """Test that None diagnostics list is handled gracefully."""
+        server_module.current_diagnostics.clear()
+
+        params = {
+            "uri": "file:///src/main.rs",
+            "diagnostics": None,
+        }
+
+        await server_module.handle_diagnostics(params)
+
+        assert "file:///src/main.rs" in server_module.current_diagnostics
+        assert len(server_module.current_diagnostics["file:///src/main.rs"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_handle_diagnostics_structured_code_format(self) -> None:
+        """Test that structured code format (CodeDescription) is handled."""
+        server_module.current_diagnostics.clear()
+
+        params = {
+            "uri": "file:///src/main.rs",
+            "diagnostics": [
+                {
+                    "severity": 2,
+                    "message": "Unlinked file",
+                    "code": {"value": "unlinked-file", "target": "https://..."},
+                },
+                {"severity": 1, "message": "Real error", "code": {"value": "E0001"}},
+            ],
+        }
+
+        await server_module.handle_diagnostics(params)
+
+        diagnostics = server_module.current_diagnostics["file:///src/main.rs"]
+        assert len(diagnostics) == 1
+        assert diagnostics[0]["message"] == "Real error"
+
+
+class TestDiagnosticCodeExtraction:
+    """Test the _get_diagnostic_code helper function."""
+
+    def test_string_code(self) -> None:
+        """Test extraction of string code."""
+        diag = {"code": "E0001", "message": "error"}
+        assert server_module._get_diagnostic_code(diag) == "E0001"
+
+    def test_dict_code_with_value(self) -> None:
+        """Test extraction of structured code with value field."""
+        diag = {"code": {"value": "unlinked-file", "target": "https://..."}}
+        assert server_module._get_diagnostic_code(diag) == "unlinked-file"
+
+    def test_none_code(self) -> None:
+        """Test handling of None code."""
+        diag = {"message": "error"}
+        assert server_module._get_diagnostic_code(diag) is None
+
+    def test_numeric_code(self) -> None:
+        """Test handling of numeric code."""
+        diag = {"code": 123, "message": "error"}
+        assert server_module._get_diagnostic_code(diag) == "123"
+
+    def test_dict_code_without_value(self) -> None:
+        """Test handling of dict code without value field."""
+        diag = {"code": {"other": "data"}}
+        assert server_module._get_diagnostic_code(diag) is None

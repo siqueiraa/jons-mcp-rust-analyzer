@@ -50,6 +50,21 @@ rust_analyzer: RustAnalyzerClient | None = None
 # Store diagnostics from rust-analyzer
 current_diagnostics: dict[str, list[dict[str, Any]]] = {}
 
+# Diagnostic codes to filter out (false positives for feature-gated files)
+FILTERED_DIAGNOSTIC_CODES = {"unlinked-file"}
+
+
+def _get_diagnostic_code(diag: dict[str, Any]) -> str | None:
+    """Extract diagnostic code, handling both string and structured formats."""
+    code = diag.get("code")
+    if code is None:
+        return None
+    if isinstance(code, str):
+        return code
+    if isinstance(code, dict):
+        return code.get("value")  # LSP CodeDescription format
+    return str(code)  # Fallback for numeric codes
+
 
 async def handle_diagnostics(params: dict[str, Any]) -> None:
     """Handle diagnostics notification from rust-analyzer.
@@ -58,9 +73,19 @@ async def handle_diagnostics(params: dict[str, Any]) -> None:
         params: The publishDiagnostics notification parameters
     """
     uri = params.get("uri", "")
-    diagnostics_list = params.get("diagnostics", [])
-    current_diagnostics[uri] = diagnostics_list
-    logger.debug(f"Received {len(diagnostics_list)} diagnostics for {uri}")
+    diagnostics_list = params.get("diagnostics") or []  # Handle None case
+
+    # Filter out known false-positive diagnostics
+    filtered_diagnostics = [
+        diag for diag in diagnostics_list
+        if _get_diagnostic_code(diag) not in FILTERED_DIAGNOSTIC_CODES
+    ]
+
+    current_diagnostics[uri] = filtered_diagnostics
+    logger.debug(
+        f"Received {len(filtered_diagnostics)} diagnostics for {uri} "
+        f"(filtered {len(diagnostics_list) - len(filtered_diagnostics)})"
+    )
 
 
 @asynccontextmanager
